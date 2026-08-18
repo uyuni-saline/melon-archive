@@ -2,7 +2,7 @@
 
 ## Project scope
 
-Melon Archive is a dependency-free userscript for Melonbooks and Toranoana product detail pages. It extracts product metadata, builds a normalized archive title, copies the title, and optionally downloads the displayed cover image.
+Melon Archive is a dependency-free userscript for Melonbooks product detail pages. It extracts product metadata, builds a normalized archive title, replaces the page's original heading text, copies the title, and optionally downloads the displayed cover image.
 
 Keep `README.md` user-facing. Installation, usage, permissions, privacy, troubleshooting, and support information belong there. Development notes, architecture, tests, release work, and implementation history belong in this file or the pull request description.
 
@@ -20,14 +20,14 @@ Do not introduce a build step unless the project grows enough to justify one. Th
 The userscript is organized in the following order:
 
 1. metadata block and constants
-2. site definitions
+2. Melonbooks site definition
 3. pure normalization and title-building helpers
 4. site and DOM extraction helpers
 5. cover discovery and download helpers
 6. UI state and event handlers
 7. startup and CommonJS test exports
 
-Site-specific selectors and visual colors belong in `SITE_DEFINITIONS`. Keep title formatting and filename handling independent of the DOM so they can be tested in Node.
+Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title formatting and filename handling independent of the DOM so they can be tested in Node.
 
 ## Preserved behavior
 
@@ -37,9 +37,10 @@ Site-specific selectors and visual colors belong in `SITE_DEFINITIONS`. Keep tit
 - Completed buttons remain clickable; only an active download temporarily disables its button.
 - Do not inject the action container more than once.
 - Use the cover's detected image type for its filename extension.
-- Show the effective full archive title directly below the storefront's main title.
+- Replace the storefront's main heading text with the effective full archive title while preserving the heading element and its original styling.
 - Exclude full-width `【...】` segments from the product title by default; include them only when the user checks the option.
-- Keep the preview, copied title, and downloaded filename synchronized with that option.
+- Keep the replaced heading, copied title, and downloaded filename synchronized with that option.
+- Place the option in the same button row immediately after the download button.
 - Button status text must not append the generated title.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
@@ -50,7 +51,7 @@ Treat changes to these behaviors as product decisions rather than cleanup.
 - Keep `@homepageURL`, `@supportURL`, `@updateURL`, and `@downloadURL` aligned with this repository.
 - Increment `@version` for every released userscript change, using semantic versioning.
 - Prefer narrow `@match` entries and retain the runtime URL validation in `getSiteDefinition`.
-- `@connect *` currently supports cover images served from changing third-party CDNs. If it is narrowed, verify real cover hosts on every supported storefront first.
+- `@connect *` currently supports cover images served from changing third-party CDNs. If it is narrowed, verify real cover hosts on both supported Melonbooks detail paths first.
 - Avoid third-party `@require` dependencies when browser and userscript APIs are sufficient.
 
 ## Development commands
@@ -67,21 +68,18 @@ Run all three checks after changing JavaScript, tests, or metadata. Add or updat
 
 ## Manual verification
 
-Before a release, test at least one currently available product page for each applicable storefront:
+Before a release, test currently available product pages for both supported paths:
 
 - Melonbooks `/products/detail.php` path
 - Melonbooks `/detail/detail.php` path, if reachable
-- Toranoana `tora`
-- Toranoana `tora_r`
-- `.shop` variants when available
 
 Confirm the following:
 
 - buttons appear once and in the intended location;
-- the full archive title appears directly below the storefront title in smaller text;
-- the full-width bracket option is unchecked by default and updates the preview immediately;
+- the storefront heading element keeps its original styling while its text becomes the full archive title;
+- the full-width bracket option follows the download button, is unchecked by default, and updates the heading immediately;
 - extracted event, circle, author, title, and genre are not duplicated;
-- both buttons copy the title currently shown in the preview without appending it to button text;
+- both buttons copy the title currently shown in the heading without appending it to button text;
 - a cover downloads with a sanitized filename and correct extension;
 - busy, success, missing-cover, and download-error states remain understandable;
 - keyboard focus and activation work on both buttons.

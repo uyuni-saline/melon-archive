@@ -92,13 +92,11 @@ test('buildTitle supports author-only products', () => {
 
 test('getSiteDefinition accepts supported product URLs only', () => {
   assert.equal(
-    getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php?product_id=123')?.id,
-    'melonbooks'
+    getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php?product_id=123')
+      ?.titleSelector,
+    '.page-header'
   );
-  assert.equal(
-    getSiteDefinition('https://ec.toranoana.jp/tora_r/ec/item/040031234567/')?.id,
-    'toranoana'
-  );
+  assert.equal(getSiteDefinition('https://example.com/detail/detail.php?product_id=123'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/'), null);
   assert.equal(getSiteDefinition('not a URL'), null);

@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Melon Archive - 同人志标题与封面
+// @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.1.0
-// @description  在Melonbooks与Toranoana商品页生成规范标题，并复制标题或下载封面。
+// @version      1.2.0
+// @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
 // @supportURL   https://github.com/uyuni-saline/melon-archive/issues
@@ -10,10 +10,6 @@
 // @downloadURL  https://raw.githubusercontent.com/uyuni-saline/melon-archive/main/melon-archive.user.js
 // @match        https://www.melonbooks.co.jp/detail/detail.php*
 // @match        https://www.melonbooks.co.jp/products/detail.php*
-// @match        https://ec.toranoana.jp/tora/ec/item/*
-// @match        https://ec.toranoana.jp/tora_r/ec/item/*
-// @match        https://ec.toranoana.shop/tora/ec/item/*
-// @match        https://ec.toranoana.shop/tora_r/ec/item/*
 // @connect      *
 // @grant        GM_addStyle
 // @grant        GM_notification
@@ -32,33 +28,15 @@
   const ELEMENT_WAIT_TIMEOUT_MS = 12_000;
   const DOWNLOAD_TIMEOUT_MS = 30_000;
 
-  const SITE_DEFINITIONS = Object.freeze({
-    melonbooks: {
-      id: 'melonbooks',
-      hostnames: ['www.melonbooks.co.jp'],
-      paths: ['/detail/detail.php', '/products/detail.php'],
-      anchorSelector: '.page-header',
-      titleSelector: '.page-header',
-      rowSelector: '.item-detail .table-wrapper tr',
-      accent: '#f5a623',
-      textColor: '#1f1f1f',
-      coverSelectors: ['.main_image img', '.item-main img'],
-    },
-    toranoana: {
-      id: 'toranoana',
-      hostnames: ['ec.toranoana.jp', 'ec.toranoana.shop'],
-      pathPattern: /^\/tora(?:_r)?\/ec\/item\/\d+\/?$/u,
-      anchorSelector: '.product-detail-desc-title > span',
-      titleSelector: '.product-detail-desc-title > span',
-      rowSelector: '.product-detail-spec-table tr',
-      accent: '#d92831',
-      textColor: '#ffffff',
-      coverSelectors: [
-        '.product-detail-main-photo img',
-        '.product-detail-image img',
-        '.product-detail-main img',
-      ],
-    },
+  const SITE_DEFINITION = Object.freeze({
+    hostnames: ['www.melonbooks.co.jp'],
+    paths: ['/detail/detail.php', '/products/detail.php'],
+    anchorSelector: '.page-header',
+    titleSelector: '.page-header',
+    rowSelector: '.item-detail .table-wrapper tr',
+    accent: '#f5a623',
+    textColor: '#1f1f1f',
+    coverSelectors: ['.main_image img', '.item-main img'],
   });
 
   const INVALID_FILENAME_CHARS = Object.freeze({
@@ -89,19 +67,11 @@
   margin: 4px 0 8px;
 }
 
-#${UI_ID} .melon-archive-title-preview {
-  margin: 0 0 6px;
-  color: #555;
-  font: 400 .82em/1.5 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
 #${UI_ID} .melon-archive-option {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin: 0 0 7px;
+  margin: 0 0 0 4px;
   color: #555;
   font: 400 12px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
   cursor: pointer;
@@ -274,7 +244,7 @@
   /**
    * 判断URL对应的站点适配器。
    * @param {URL|string} input
-   * @returns {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS] | null}
+   * @returns {typeof SITE_DEFINITION | null}
    */
   function getSiteDefinition(input) {
     let url;
@@ -284,17 +254,10 @@
       return null;
     }
 
-    for (const definition of Object.values(SITE_DEFINITIONS)) {
-      if (!definition.hostnames.includes(url.hostname)) continue;
-      if (
-        definition.paths?.includes(url.pathname) &&
-        /^\d+$/u.test(url.searchParams.get('product_id') ?? '')
-      ) {
-        return definition;
-      }
-      if (definition.pathPattern?.test(url.pathname)) return definition;
-    }
-    return null;
+    const isSupportedHost = SITE_DEFINITION.hostnames.includes(url.hostname);
+    const isSupportedPath = SITE_DEFINITION.paths.includes(url.pathname);
+    const hasProductId = /^\d+$/u.test(url.searchParams.get('product_id') ?? '');
+    return isSupportedHost && isSupportedPath && hasProductId ? SITE_DEFINITION : null;
   }
 
   /**
@@ -368,7 +331,7 @@
 
   /**
    * 从当前详情页提取标题与规格表字段。
-   * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
+   * @param {typeof SITE_DEFINITION} site
    * @returns {{rawTitle: string, info: Record<string, string>}}
    */
   function extractProduct(site) {
@@ -377,23 +340,14 @@
     const rawTitle = normalizeSpaces(titleElement?.innerText || titleElement?.textContent || '');
 
     for (const row of document.querySelectorAll(site.rowSelector)) {
-      let keyCell;
-      let valueCell;
-
-      if (site.id === 'melonbooks') {
-        keyCell = row.querySelector('th');
-        valueCell = row.querySelector('td');
-      } else {
-        const cells = row.querySelectorAll('td');
-        [keyCell, valueCell] = cells;
-      }
-
+      const keyCell = row.querySelector('th');
+      const valueCell = row.querySelector('td');
       if (!keyCell || !valueCell) continue;
       const key = normalizeSpaces(keyCell.innerText || keyCell.textContent || '');
       if (!key) continue;
 
       const isGenre = key === 'ジャンル' || key === 'ジャンル/サブジャンル';
-      const melonGenre = site.id === 'melonbooks' && isGenre ? extractMelonGenres(valueCell) : '';
+      const melonGenre = isGenre ? extractMelonGenres(valueCell) : '';
       info[key] = melonGenre || extractCellValue(valueCell);
     }
 
@@ -432,7 +386,7 @@
 
   /**
    * 按精确区域、Melonbooks兼容图片接口、Open Graph的顺序寻找封面。
-   * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
+   * @param {typeof SITE_DEFINITION} site
    * @returns {string|null}
    */
   function findCoverUrl(site) {
@@ -576,7 +530,7 @@
 
   /**
    * 复制标题并下载封面。
-   * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
+   * @param {typeof SITE_DEFINITION} site
    * @param {() => string} getTitle
    * @param {HTMLButtonElement} button
    */
@@ -610,7 +564,7 @@
   }
 
   /**
-   * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
+   * @param {typeof SITE_DEFINITION} site
    */
   async function injectUi(site) {
     if (document.getElementById(UI_ID)) return;
@@ -626,10 +580,6 @@
       container.style.setProperty('--melon-archive-accent', site.accent);
       container.style.setProperty('--melon-archive-text', site.textColor);
 
-      const titlePreview = document.createElement('p');
-      titlePreview.className = 'melon-archive-title-preview';
-      titlePreview.setAttribute('aria-live', 'polite');
-
       const optionLabel = document.createElement('label');
       optionLabel.className = 'melon-archive-option';
       const includeBracketedCheckbox = document.createElement('input');
@@ -643,25 +593,27 @@
       buttonGroup.className = 'melon-archive-buttons';
       const copyButton = createButton('复制信息');
       const downloadButton = createButton('复制并下载封面');
+      const product = extractProduct(site);
 
       const getCurrentTitle = () =>
-        buildTitle(extractProduct(site), {
+        buildTitle(product, {
           includeBracketedContent: includeBracketedCheckbox.checked,
         });
-      const updateTitlePreview = () => {
-        titlePreview.textContent = getCurrentTitle() || '未能生成完整标题';
+      const updatePageTitle = () => {
+        const title = getCurrentTitle();
+        if (title) anchor.textContent = title;
       };
 
-      includeBracketedCheckbox.addEventListener('change', updateTitlePreview);
+      includeBracketedCheckbox.addEventListener('change', updatePageTitle);
       copyButton.addEventListener('click', () => copyTitle(getCurrentTitle, copyButton));
       downloadButton.addEventListener('click', () =>
         void copyAndDownload(site, getCurrentTitle, downloadButton)
       );
 
-      buttonGroup.append(copyButton, downloadButton);
-      container.append(titlePreview, optionLabel, buttonGroup);
+      buttonGroup.append(copyButton, downloadButton, optionLabel);
+      container.append(buttonGroup);
       anchor.after(container);
-      updateTitlePreview();
+      updatePageTitle();
     } catch (error) {
       console.error(`[${SCRIPT_LABEL}] UI injection failed.`, error);
       notify(`按钮注入失败：${error instanceof Error ? error.message : String(error)}`);
