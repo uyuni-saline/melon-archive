@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.3.0
+// @version      1.4.0
 // @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -24,6 +24,7 @@
 
   const SCRIPT_LABEL = 'Melon Archive';
   const UI_ID = 'melon-archive-actions';
+  const FIELD_PANEL_ID = 'melon-archive-fields';
   const AUTHOR_PLACEHOLDER = true;
   const ELEMENT_WAIT_TIMEOUT_MS = 12_000;
   const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -34,8 +35,12 @@
     anchorSelector: '.page-header',
     titleSelector: '.page-header',
     rowSelector: '.item-detail .table-wrapper tr',
-    accent: '#f5a623',
-    textColor: '#1f1f1f',
+    fieldPanelSelector: '.item-metas-wrap .item-meta3',
+    copyButtonColor: '#56C0CA',
+    downloadButtonColor: '#F6BD57',
+    actionTextColor: '#1f1f1f',
+    fieldButtonColor: '#EDEADA',
+    fieldButtonTextColor: '#00A667',
     coverSelectors: ['.main_image img', '.item-main img'],
   });
 
@@ -69,8 +74,9 @@
 
   const STYLES = `
 #${UI_ID} {
-  --melon-archive-accent: #555;
-  --melon-archive-text: #fff;
+  --melon-archive-copy-color: #56C0CA;
+  --melon-archive-download-color: #F6BD57;
+  --melon-archive-action-text: #1f1f1f;
   display: block;
   margin: 4px 0 8px;
 }
@@ -78,10 +84,16 @@
 #${UI_ID} .melon-archive-option {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin: 0 0 0 4px;
-  color: #555;
-  font: 400 12px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+  gap: 7px;
+  height: 35px;
+  box-sizing: border-box;
+  margin: 0;
+  border: 1px solid #d8d8d8;
+  border-radius: 3px;
+  padding: 0 12px;
+  color: #444;
+  background: #f7f7f7;
+  font: 600 12px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
   cursor: pointer;
   user-select: none;
 }
@@ -90,7 +102,7 @@
   width: 14px;
   height: 14px;
   margin: 0;
-  accent-color: var(--melon-archive-accent);
+  accent-color: var(--melon-archive-copy-color);
 }
 
 #${UI_ID} .melon-archive-buttons {
@@ -100,7 +112,7 @@
   gap: 6px;
 }
 
-#${UI_ID} .melon-archive-button {
+.melon-archive-button {
   appearance: none;
   width: auto;
   max-width: 100%;
@@ -108,31 +120,89 @@
   border: 0;
   border-radius: 3px;
   padding: 9px 14px;
-  color: var(--melon-archive-text);
-  background: var(--melon-archive-accent);
   font: 600 12px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
   text-align: center;
-  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
-#${UI_ID} .melon-archive-button:hover {
+.melon-archive-button--copy {
+  color: var(--melon-archive-action-text);
+  background: var(--melon-archive-copy-color);
+}
+
+.melon-archive-button--download {
+  color: var(--melon-archive-action-text);
+  background: var(--melon-archive-download-color);
+}
+
+.melon-archive-button:hover {
   filter: brightness(.94);
 }
 
-#${UI_ID} .melon-archive-button:focus-visible {
+.melon-archive-button:focus-visible,
+#${UI_ID} .melon-archive-option:has(input:focus-visible) {
   outline: 2px solid #1967d2;
   outline-offset: 2px;
 }
 
-#${UI_ID} .melon-archive-button:disabled,
-#${UI_ID} .melon-archive-button.is-busy {
+.melon-archive-button:disabled,
+.melon-archive-button.is-busy {
   opacity: .62;
   cursor: wait;
 }
 
-#${UI_ID} .melon-archive-button.is-done {
+.melon-archive-button.is-done {
   filter: saturate(.78);
+}
+
+.melon-archive-has-fields {
+  display: flow-root;
+}
+
+#${FIELD_PANEL_ID} {
+  --melon-archive-field-color: #EDEADA;
+  --melon-archive-field-text: #00A667;
+  float: right;
+  clear: right;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 240px;
+  margin: 0 0 16px 20px;
+}
+
+#${FIELD_PANEL_ID} .melon-archive-button--field {
+  display: block;
+  width: 240px;
+  height: 34px;
+  max-width: 100%;
+  border: 1px solid #bebbae;
+  border-radius: 0;
+  padding: 0 10px;
+  color: var(--melon-archive-field-text);
+  background: var(--melon-archive-field-color);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#${FIELD_PANEL_ID} .melon-archive-button--field[hidden] {
+  display: none;
+}
+
+#${FIELD_PANEL_ID}.melon-archive-fields--fallback {
+  float: none;
+  clear: both;
+  margin: 8px 0 0;
+}
+
+@media screen and (max-width: 979px) {
+  #${FIELD_PANEL_ID} {
+    float: none;
+    clear: both;
+    margin: 0 0 16px;
+  }
 }
 `;
 
@@ -237,7 +307,8 @@
   function buildTitleParts(product, options = {}) {
     const info = product?.info ?? {};
     const rawTitle = normalizeSpaces(product?.rawTitle);
-    const title = options.includeBracketedContent ? rawTitle : stripBracketedContent(rawTitle);
+    const title =
+      options.includeBracketedContent === false ? stripBracketedContent(rawTitle) : rawTitle;
     const circle = normalizeSpaces(pickField(info, 'サークル名', 'サークル'))
       .replace(/\s*\(作品数\s*[:：]\s*\d+\)\s*$/u, '')
       .trim();
@@ -246,6 +317,16 @@
     const genre = normalizeSpaces(pickField(info, 'ジャンル', 'ジャンル/サブジャンル'));
 
     return { event, circle, author, title, genre };
+  }
+
+  /**
+   * 生成字段复制按钮显示的文字；实际复制内容不受视觉截断影响。
+   * @param {string} label
+   * @param {string} value
+   * @returns {string}
+   */
+  function formatFieldButtonText(label, value) {
+    return `${normalizeSpaces(label)}：${normalizeSpaces(value)}`;
   }
 
   /**
@@ -527,12 +608,13 @@
 
   /**
    * @param {string} label
+   * @param {string} [modifier]
    * @returns {HTMLButtonElement}
    */
-  function createButton(label) {
+  function createButton(label, modifier = '') {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'melon-archive-button';
+    button.className = `melon-archive-button${modifier ? ` melon-archive-button--${modifier}` : ''}`;
     button.textContent = label;
     button.title = label;
     return button;
@@ -548,6 +630,15 @@
     if (!value) return;
     GM_setClipboard(value, 'text');
     setButtonDone(button, `✅ ${label}已复制`);
+    const previousTimer = Number(button.dataset.resetTimer);
+    if (previousTimer) window.clearTimeout(previousTimer);
+    button.dataset.resetTimer = String(
+      window.setTimeout(() => {
+        button.textContent = button.dataset.defaultText ?? button.textContent;
+        button.classList.remove('is-done');
+        delete button.dataset.resetTimer;
+      }, 1_200)
+    );
   }
 
   /**
@@ -618,15 +709,16 @@
       container.id = UI_ID;
       container.setAttribute('role', 'group');
       container.setAttribute('aria-label', '同人志归档操作');
-      container.style.setProperty('--melon-archive-accent', site.accent);
-      container.style.setProperty('--melon-archive-text', site.textColor);
+      container.style.setProperty('--melon-archive-copy-color', site.copyButtonColor);
+      container.style.setProperty('--melon-archive-download-color', site.downloadButtonColor);
+      container.style.setProperty('--melon-archive-action-text', site.actionTextColor);
 
       const buttonGroup = document.createElement('div');
       buttonGroup.className = 'melon-archive-buttons';
-      const copyButton = createButton('复制信息');
-      const downloadButton = createButton('复制并下载封面');
+      const copyButton = createButton('📋复制信息', 'copy');
+      const downloadButton = createButton('📥复制并下载封面', 'download');
       const product = extractProduct(site);
-      let includeBracketedContent = false;
+      let includeBracketedContent = true;
 
       const getCurrentOptions = () => ({ includeBracketedContent });
       const getCurrentParts = () => buildTitleParts(product, getCurrentOptions());
@@ -641,34 +733,68 @@
         void copyAndDownload(site, getCurrentTitle, downloadButton)
       );
 
-      const fieldButtons = FIELD_COPY_BUTTONS.flatMap(({ key, label }) => {
-        if (!getCurrentParts()[key]) return [];
-        const button = createButton(`复制${label}`);
+      const fieldPanelTarget = document.querySelector(site.fieldPanelSelector);
+      const fieldPanel = document.createElement('div');
+      fieldPanel.id = FIELD_PANEL_ID;
+      fieldPanel.setAttribute('role', 'group');
+      fieldPanel.setAttribute('aria-label', '单项信息复制');
+      fieldPanel.style.setProperty('--melon-archive-field-color', site.fieldButtonColor);
+      fieldPanel.style.setProperty('--melon-archive-field-text', site.fieldButtonTextColor);
+
+      const fieldButtons = FIELD_COPY_BUTTONS.map(({ key, label }) => {
+        const button = createButton('', 'field');
         button.addEventListener('click', () => copyField(getCurrentParts()[key], label, button));
-        return [button];
+        return { key, label, button };
       });
 
-      buttonGroup.append(copyButton, downloadButton, ...fieldButtons);
+      const updateFieldButtons = () => {
+        const parts = getCurrentParts();
+        for (const { key, label, button } of fieldButtons) {
+          const value = parts[key];
+          button.hidden = !value;
+          if (!value) continue;
+          const text = formatFieldButtonText(label, value);
+          button.textContent = text;
+          button.title = text;
+          button.dataset.defaultText = text;
+        }
+      };
+
+      buttonGroup.append(copyButton, downloadButton);
 
       if (hasBracketedContent(product.rawTitle)) {
         const optionLabel = document.createElement('label');
         optionLabel.className = 'melon-archive-option';
         const includeBracketedCheckbox = document.createElement('input');
         includeBracketedCheckbox.type = 'checkbox';
-        includeBracketedCheckbox.checked = false;
+        includeBracketedCheckbox.checked = true;
         const optionText = document.createElement('span');
-        optionText.textContent = '包含标题中的【】内容';
+        optionText.textContent = '显示【】内容';
         optionLabel.append(includeBracketedCheckbox, optionText);
 
         includeBracketedCheckbox.addEventListener('change', () => {
           includeBracketedContent = includeBracketedCheckbox.checked;
           updatePageTitle();
+          updateFieldButtons();
         });
         buttonGroup.append(optionLabel);
       }
 
       container.append(buttonGroup);
       anchor.after(container);
+      updateFieldButtons();
+      const visibleFieldButtons = fieldButtons
+        .map(({ button }) => button)
+        .filter((button) => !button.hidden);
+      if (fieldPanelTarget && visibleFieldButtons.length > 0) {
+        fieldPanel.append(...visibleFieldButtons);
+        fieldPanelTarget.classList.add('melon-archive-has-fields');
+        fieldPanelTarget.prepend(fieldPanel);
+      } else if (visibleFieldButtons.length > 0) {
+        fieldPanel.classList.add('melon-archive-fields--fallback');
+        fieldPanel.append(...visibleFieldButtons);
+        container.append(fieldPanel);
+      }
       updatePageTitle();
     } catch (error) {
       console.error(`[${SCRIPT_LABEL}] UI injection failed.`, error);
@@ -688,6 +814,7 @@
     module.exports = {
       buildTitle,
       buildTitleParts,
+      formatFieldButtonText,
       getSiteDefinition,
       hasBracketedContent,
       inferImageExtension,

@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   buildTitle,
   buildTitleParts,
+  formatFieldButtonText,
   getSiteDefinition,
   hasBracketedContent,
   inferImageExtension,
@@ -64,7 +65,7 @@ test('buildTitle produces the archive title format', () => {
   );
 });
 
-test('buildTitle excludes full-width bracket content by default', () => {
+test('buildTitle includes full-width bracket content by default and can hide it', () => {
   const product = {
     rawTitle: 'Nosleeve Oblige【メロン限定特典付】',
     info: {
@@ -77,11 +78,11 @@ test('buildTitle excludes full-width bracket content by default', () => {
 
   assert.equal(
     buildTitle(product),
-    '(C108) [Lunaberry (nana)] Nosleeve Oblige (オリジナル)'
+    '(C108) [Lunaberry (nana)] Nosleeve Oblige【メロン限定特典付】 (オリジナル)'
   );
   assert.equal(
-    buildTitle(product, { includeBracketedContent: true }),
-    '(C108) [Lunaberry (nana)] Nosleeve Oblige【メロン限定特典付】 (オリジナル)'
+    buildTitle(product, { includeBracketedContent: false }),
+    '(C108) [Lunaberry (nana)] Nosleeve Oblige (オリジナル)'
   );
 });
 
@@ -100,10 +101,14 @@ test('buildTitleParts returns normalized independently copyable fields', () => {
       event: 'C108',
       circle: 'Lunaberry',
       author: 'nana',
-      title: 'Nosleeve Oblige',
+      title: 'Nosleeve Oblige【メロン限定特典付】',
       genre: 'オリジナル',
     }
   );
+});
+
+test('formatFieldButtonText keeps the complete normalized value', () => {
+  assert.equal(formatFieldButtonText(' 标题 ', ' 很长的\u3000标题 '), '标题：很长的 标题');
 });
 
 test('buildTitle preserves the intentional blank author placeholder', () => {
@@ -121,11 +126,11 @@ test('buildTitle supports author-only products', () => {
 });
 
 test('getSiteDefinition accepts supported product URLs only', () => {
-  assert.equal(
-    getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php?product_id=123')
-      ?.titleSelector,
-    '.page-header'
+  const site = getSiteDefinition(
+    'https://www.melonbooks.co.jp/products/detail.php?product_id=123'
   );
+  assert.equal(site?.titleSelector, '.page-header');
+  assert.equal(site?.fieldPanelSelector, '.item-metas-wrap .item-meta3');
   assert.equal(getSiteDefinition('https://example.com/detail/detail.php?product_id=123'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/'), null);
