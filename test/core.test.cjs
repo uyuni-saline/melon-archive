@@ -1,0 +1,82 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  buildTitle,
+  getSiteDefinition,
+  inferImageExtension,
+  normalizeEventName,
+  normalizeSpaces,
+  sanitizeFilename,
+} = require('../melon-archive.user.js');
+
+test('normalizeSpaces handles full-width and repeated whitespace', () => {
+  assert.equal(normalizeSpaces('  サークル\u3000名\n  作者  '), 'サークル 名 作者');
+});
+
+test('sanitizeFilename replaces unsafe characters and protects reserved names', () => {
+  assert.equal(sanitizeFilename('A/B: C?'), 'A／B： C？');
+  assert.equal(sanitizeFilename('CON'), '_CON');
+  assert.equal(sanitizeFilename('...'), 'cover');
+});
+
+test('sanitizeFilename truncates by Unicode code point', () => {
+  assert.equal(sanitizeFilename('本📕タイトル', 3), '本📕タ');
+});
+
+test('normalizeEventName shortens known events and removes dates', () => {
+  assert.equal(normalizeEventName('コミックマーケット 106 2026/08/16'), 'C106');
+  assert.equal(normalizeEventName('博麗神社 例大祭(第23回)'), '例大祭23');
+  assert.equal(normalizeEventName('こみっくトレジャー 48'), 'こみトレ48');
+});
+
+test('buildTitle produces the archive title format', () => {
+  assert.equal(
+    buildTitle({
+      rawTitle: '新刊タイトル',
+      info: {
+        サークル名: 'テスト会 (作品数:12)',
+        作家名: '作者A',
+        イベント: 'コミックマーケット106 2026/08/16',
+        ジャンル: 'オリジナル',
+      },
+    }),
+    '(C106) [テスト会 (作者A)] 新刊タイトル (オリジナル)'
+  );
+});
+
+test('buildTitle preserves the intentional blank author placeholder', () => {
+  assert.equal(
+    buildTitle({ rawTitle: 'タイトル', info: { サークル: 'サークルのみ' } }),
+    '[サークルのみ ()] タイトル'
+  );
+});
+
+test('buildTitle supports author-only products', () => {
+  assert.equal(
+    buildTitle({ rawTitle: 'タイトル', info: { 作者: '作者のみ' } }),
+    '[作者のみ] タイトル'
+  );
+});
+
+test('getSiteDefinition accepts supported product URLs only', () => {
+  assert.equal(
+    getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php?product_id=123')?.id,
+    'melonbooks'
+  );
+  assert.equal(
+    getSiteDefinition('https://ec.toranoana.jp/tora_r/ec/item/040031234567/')?.id,
+    'toranoana'
+  );
+  assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php'), null);
+  assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/'), null);
+  assert.equal(getSiteDefinition('not a URL'), null);
+});
+
+test('inferImageExtension prioritizes MIME type and falls back to URL', () => {
+  assert.equal(inferImageExtension('image/webp', 'https://example.com/cover.jpg'), 'webp');
+  assert.equal(inferImageExtension('', 'https://example.com/cover.png?size=large'), 'png');
+  assert.equal(inferImageExtension('', 'https://example.com/image'), 'jpg');
+});
