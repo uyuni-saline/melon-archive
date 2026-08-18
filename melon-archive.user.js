@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.2.0
+// @version      1.3.0
 // @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -38,6 +38,14 @@
     textColor: '#1f1f1f',
     coverSelectors: ['.main_image img', '.item-main img'],
   });
+
+  const FIELD_COPY_BUTTONS = Object.freeze([
+    { key: 'event', label: '展会' },
+    { key: 'circle', label: '社团' },
+    { key: 'author', label: '作者' },
+    { key: 'title', label: '标题' },
+    { key: 'genre', label: '分类' },
+  ]);
 
   const INVALID_FILENAME_CHARS = Object.freeze({
     ':': '：',
@@ -150,6 +158,15 @@
   }
 
   /**
+   * 判断原始商品标题中是否含有成对的全角【】片段。
+   * @param {unknown} value
+   * @returns {boolean}
+   */
+  function hasBracketedContent(value) {
+    return /【[^】]*】/u.test(String(value ?? ''));
+  }
+
+  /**
    * 保序去重并删除空值。
    * @param {string[]} values
    * @returns {string[]}
@@ -212,12 +229,12 @@
   }
 
   /**
-   * 根据已提取的页面信息生成归档标题。
+   * 生成可单独复制的规范化标题字段。
    * @param {{rawTitle?: string, info?: Record<string, string>}} product
    * @param {{includeBracketedContent?: boolean}} [options]
-   * @returns {string}
+   * @returns {{event: string, circle: string, author: string, title: string, genre: string}}
    */
-  function buildTitle(product, options = {}) {
+  function buildTitleParts(product, options = {}) {
     const info = product?.info ?? {};
     const rawTitle = normalizeSpaces(product?.rawTitle);
     const title = options.includeBracketedContent ? rawTitle : stripBracketedContent(rawTitle);
@@ -227,6 +244,18 @@
     const author = normalizeSpaces(pickField(info, '作家名', '作家', '作者'));
     const event = normalizeEventName(pickField(info, 'イベント', '初出イベント'));
     const genre = normalizeSpaces(pickField(info, 'ジャンル', 'ジャンル/サブジャンル'));
+
+    return { event, circle, author, title, genre };
+  }
+
+  /**
+   * 根据已提取的页面信息生成归档标题。
+   * @param {{rawTitle?: string, info?: Record<string, string>}} product
+   * @param {{includeBracketedContent?: boolean}} [options]
+   * @returns {string}
+   */
+  function buildTitle(product, options = {}) {
+    const { event, circle, author, title, genre } = buildTitleParts(product, options);
 
     let creatorPart = '';
     if (circle) {
@@ -510,6 +539,18 @@
   }
 
   /**
+   * 复制单个规范化字段。
+   * @param {string} value
+   * @param {string} label
+   * @param {HTMLButtonElement} button
+   */
+  function copyField(value, label, button) {
+    if (!value) return;
+    GM_setClipboard(value, 'text');
+    setButtonDone(button, `✅ ${label}已复制`);
+  }
+
+  /**
    * 生成并复制当前商品标题。
    * @param {() => string} getTitle
    * @param {HTMLButtonElement} button
@@ -580,37 +621,52 @@
       container.style.setProperty('--melon-archive-accent', site.accent);
       container.style.setProperty('--melon-archive-text', site.textColor);
 
-      const optionLabel = document.createElement('label');
-      optionLabel.className = 'melon-archive-option';
-      const includeBracketedCheckbox = document.createElement('input');
-      includeBracketedCheckbox.type = 'checkbox';
-      includeBracketedCheckbox.checked = false;
-      const optionText = document.createElement('span');
-      optionText.textContent = '包含标题中的【】内容';
-      optionLabel.append(includeBracketedCheckbox, optionText);
-
       const buttonGroup = document.createElement('div');
       buttonGroup.className = 'melon-archive-buttons';
       const copyButton = createButton('复制信息');
       const downloadButton = createButton('复制并下载封面');
       const product = extractProduct(site);
+      let includeBracketedContent = false;
 
-      const getCurrentTitle = () =>
-        buildTitle(product, {
-          includeBracketedContent: includeBracketedCheckbox.checked,
-        });
+      const getCurrentOptions = () => ({ includeBracketedContent });
+      const getCurrentParts = () => buildTitleParts(product, getCurrentOptions());
+      const getCurrentTitle = () => buildTitle(product, getCurrentOptions());
       const updatePageTitle = () => {
         const title = getCurrentTitle();
         if (title) anchor.textContent = title;
       };
 
-      includeBracketedCheckbox.addEventListener('change', updatePageTitle);
       copyButton.addEventListener('click', () => copyTitle(getCurrentTitle, copyButton));
       downloadButton.addEventListener('click', () =>
         void copyAndDownload(site, getCurrentTitle, downloadButton)
       );
 
-      buttonGroup.append(copyButton, downloadButton, optionLabel);
+      const fieldButtons = FIELD_COPY_BUTTONS.flatMap(({ key, label }) => {
+        if (!getCurrentParts()[key]) return [];
+        const button = createButton(`复制${label}`);
+        button.addEventListener('click', () => copyField(getCurrentParts()[key], label, button));
+        return [button];
+      });
+
+      buttonGroup.append(copyButton, downloadButton, ...fieldButtons);
+
+      if (hasBracketedContent(product.rawTitle)) {
+        const optionLabel = document.createElement('label');
+        optionLabel.className = 'melon-archive-option';
+        const includeBracketedCheckbox = document.createElement('input');
+        includeBracketedCheckbox.type = 'checkbox';
+        includeBracketedCheckbox.checked = false;
+        const optionText = document.createElement('span');
+        optionText.textContent = '包含标题中的【】内容';
+        optionLabel.append(includeBracketedCheckbox, optionText);
+
+        includeBracketedCheckbox.addEventListener('change', () => {
+          includeBracketedContent = includeBracketedCheckbox.checked;
+          updatePageTitle();
+        });
+        buttonGroup.append(optionLabel);
+      }
+
       container.append(buttonGroup);
       anchor.after(container);
       updatePageTitle();
@@ -631,7 +687,9 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = {
       buildTitle,
+      buildTitleParts,
       getSiteDefinition,
+      hasBracketedContent,
       inferImageExtension,
       normalizeEventName,
       normalizeSpaces,
