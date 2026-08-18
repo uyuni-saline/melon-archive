@@ -1,0 +1,10 @@
+{
+  "name": "melon-archive",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Userscript for archiving doujinshi titles and cover images from Melonbooks.",
+  "scripts": {
+    "check": "node --check melon-archive.user.js",
+    "test": "node --test"
+  }
+}
