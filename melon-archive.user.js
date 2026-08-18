@@ -390,7 +390,7 @@
   }
 
   /**
-   * 按精确区域、Melonbooks旧版图片接口、Open Graph的顺序寻找封面。
+   * 按精确区域、Melonbooks兼容图片接口、Open Graph的顺序寻找封面。
    * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
    * @returns {string|null}
    */
@@ -400,11 +400,11 @@
       if (url) return url;
     }
 
-    const legacyMelonImage = [...document.images].find((image) =>
+    const compatibleMelonImage = [...document.images].find((image) =>
       getImageUrl(image)?.includes('/user_data/packages/resize_image.php?image=')
     );
-    const legacyUrl = getImageUrl(legacyMelonImage);
-    if (legacyUrl) return legacyUrl;
+    const compatibleUrl = getImageUrl(compatibleMelonImage);
+    if (compatibleUrl) return compatibleUrl;
 
     const openGraphUrl = toAbsoluteUrl(
       document.querySelector('meta[property="og:image"]')?.getAttribute('content')
