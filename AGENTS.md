@@ -37,6 +37,10 @@ Site-specific selectors and visual colors belong in `SITE_DEFINITIONS`. Keep tit
 - Completed buttons remain clickable; only an active download temporarily disables its button.
 - Do not inject the action container more than once.
 - Use the cover's detected image type for its filename extension.
+- Show the effective full archive title directly below the storefront's main title.
+- Exclude full-width `【...】` segments from the product title by default; include them only when the user checks the option.
+- Keep the preview, copied title, and downloaded filename synchronized with that option.
+- Button status text must not append the generated title.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
 
@@ -74,8 +78,10 @@ Before a release, test at least one currently available product page for each ap
 Confirm the following:
 
 - buttons appear once and in the intended location;
+- the full archive title appears directly below the storefront title in smaller text;
+- the full-width bracket option is unchecked by default and updates the preview immediately;
 - extracted event, circle, author, title, and genre are not duplicated;
-- both buttons copy the expected title;
+- both buttons copy the title currently shown in the preview without appending it to button text;
 - a cover downloads with a sanitized filename and correct extension;
 - busy, success, missing-cover, and download-error states remain understandable;
 - keyboard focus and activation work on both buttons.

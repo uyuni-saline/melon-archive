@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive - 同人志标题与封面
 // @namespace    https://github.com/uyuni-saline
-// @version      1.0.0
+// @version      1.1.0
 // @description  在Melonbooks与Toranoana商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -85,11 +85,41 @@
 #${UI_ID} {
   --melon-archive-accent: #555;
   --melon-archive-text: #fff;
+  display: block;
+  margin: 4px 0 8px;
+}
+
+#${UI_ID} .melon-archive-title-preview {
+  margin: 0 0 6px;
+  color: #555;
+  font: 400 .82em/1.5 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+#${UI_ID} .melon-archive-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 7px;
+  color: #555;
+  font: 400 12px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+  cursor: pointer;
+  user-select: none;
+}
+
+#${UI_ID} .melon-archive-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--melon-archive-accent);
+}
+
+#${UI_ID} .melon-archive-buttons {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 6px 0;
 }
 
 #${UI_ID} .melon-archive-button {
@@ -138,6 +168,15 @@
       .replace(/\u3000/gu, ' ')
       .replace(/\s+/gu, ' ')
       .trim();
+  }
+
+  /**
+   * 删除商品主标题中的全角【】片段及其内容。
+   * @param {unknown} value
+   * @returns {string}
+   */
+  function stripBracketedContent(value) {
+    return normalizeSpaces(normalizeSpaces(value).replace(/【[^】]*】/gu, ' '));
   }
 
   /**
@@ -205,11 +244,13 @@
   /**
    * 根据已提取的页面信息生成归档标题。
    * @param {{rawTitle?: string, info?: Record<string, string>}} product
+   * @param {{includeBracketedContent?: boolean}} [options]
    * @returns {string}
    */
-  function buildTitle(product) {
+  function buildTitle(product, options = {}) {
     const info = product?.info ?? {};
-    const title = normalizeSpaces(product?.rawTitle);
+    const rawTitle = normalizeSpaces(product?.rawTitle);
+    const title = options.includeBracketedContent ? rawTitle : stripBracketedContent(rawTitle);
     const circle = normalizeSpaces(pickField(info, 'サークル名', 'サークル'))
       .replace(/\s*\(作品数\s*[:：]\s*\d+\)\s*$/u, '')
       .trim();
@@ -516,12 +557,12 @@
 
   /**
    * 生成并复制当前商品标题。
-   * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
+   * @param {() => string} getTitle
    * @param {HTMLButtonElement} button
    * @returns {string|null}
    */
-  function copyTitle(site, button) {
-    const title = buildTitle(extractProduct(site));
+  function copyTitle(getTitle, button) {
+    const title = getTitle();
     if (!title) {
       button.textContent = '❌ 未找到标题';
       notify('未能从页面提取商品标题，页面结构可能已经变化。');
@@ -529,18 +570,18 @@
     }
 
     GM_setClipboard(title, 'text');
-    button.title = title;
-    setButtonDone(button, `✅ 已复制 ${title}`);
+    setButtonDone(button, '✅ 已复制');
     return title;
   }
 
   /**
    * 复制标题并下载封面。
    * @param {typeof SITE_DEFINITIONS[keyof typeof SITE_DEFINITIONS]} site
+   * @param {() => string} getTitle
    * @param {HTMLButtonElement} button
    */
-  async function copyAndDownload(site, button) {
-    const title = copyTitle(site, button);
+  async function copyAndDownload(site, getTitle, button) {
+    const title = copyTitle(getTitle, button);
     if (!title) return;
 
     const coverUrl = findCoverUrl(site);
@@ -558,8 +599,7 @@
       const blob = await downloadBlob(coverUrl);
       const extension = inferImageExtension(blob.type, coverUrl);
       saveBlob(blob, `${sanitizeFilename(title)}.${extension}`);
-      button.title = title;
-      setButtonDone(button, `✅ 已下载 ${title}`);
+      setButtonDone(button, '✅ 已下载');
     } catch (error) {
       console.error(`[${SCRIPT_LABEL}] Cover download failed.`, error);
       button.disabled = false;
@@ -586,13 +626,42 @@
       container.style.setProperty('--melon-archive-accent', site.accent);
       container.style.setProperty('--melon-archive-text', site.textColor);
 
+      const titlePreview = document.createElement('p');
+      titlePreview.className = 'melon-archive-title-preview';
+      titlePreview.setAttribute('aria-live', 'polite');
+
+      const optionLabel = document.createElement('label');
+      optionLabel.className = 'melon-archive-option';
+      const includeBracketedCheckbox = document.createElement('input');
+      includeBracketedCheckbox.type = 'checkbox';
+      includeBracketedCheckbox.checked = false;
+      const optionText = document.createElement('span');
+      optionText.textContent = '包含标题中的【】内容';
+      optionLabel.append(includeBracketedCheckbox, optionText);
+
+      const buttonGroup = document.createElement('div');
+      buttonGroup.className = 'melon-archive-buttons';
       const copyButton = createButton('复制信息');
       const downloadButton = createButton('复制并下载封面');
-      copyButton.addEventListener('click', () => copyTitle(site, copyButton));
-      downloadButton.addEventListener('click', () => void copyAndDownload(site, downloadButton));
 
-      container.append(copyButton, downloadButton);
+      const getCurrentTitle = () =>
+        buildTitle(extractProduct(site), {
+          includeBracketedContent: includeBracketedCheckbox.checked,
+        });
+      const updateTitlePreview = () => {
+        titlePreview.textContent = getCurrentTitle() || '未能生成完整标题';
+      };
+
+      includeBracketedCheckbox.addEventListener('change', updateTitlePreview);
+      copyButton.addEventListener('click', () => copyTitle(getCurrentTitle, copyButton));
+      downloadButton.addEventListener('click', () =>
+        void copyAndDownload(site, getCurrentTitle, downloadButton)
+      );
+
+      buttonGroup.append(copyButton, downloadButton);
+      container.append(titlePreview, optionLabel, buttonGroup);
       anchor.after(container);
+      updateTitlePreview();
     } catch (error) {
       console.error(`[${SCRIPT_LABEL}] UI injection failed.`, error);
       notify(`按钮注入失败：${error instanceof Error ? error.message : String(error)}`);
@@ -615,6 +684,7 @@
       normalizeEventName,
       normalizeSpaces,
       sanitizeFilename,
+      stripBracketedContent,
     };
   } else {
     main();

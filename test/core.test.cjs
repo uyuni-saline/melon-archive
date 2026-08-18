@@ -10,10 +10,18 @@ const {
   normalizeEventName,
   normalizeSpaces,
   sanitizeFilename,
+  stripBracketedContent,
 } = require('../melon-archive.user.js');
 
 test('normalizeSpaces handles full-width and repeated whitespace', () => {
   assert.equal(normalizeSpaces('  サークル\u3000名\n  作者  '), 'サークル 名 作者');
+});
+
+test('stripBracketedContent removes every full-width bracket segment', () => {
+  assert.equal(
+    stripBracketedContent('Nosleeve Oblige【メロン限定特典付】【予約】'),
+    'Nosleeve Oblige'
+  );
 });
 
 test('sanitizeFilename replaces unsafe characters and protects reserved names', () => {
@@ -44,6 +52,27 @@ test('buildTitle produces the archive title format', () => {
       },
     }),
     '(C106) [テスト会 (作者A)] 新刊タイトル (オリジナル)'
+  );
+});
+
+test('buildTitle excludes full-width bracket content by default', () => {
+  const product = {
+    rawTitle: 'Nosleeve Oblige【メロン限定特典付】',
+    info: {
+      サークル名: 'Lunaberry (作品数:36)',
+      作家名: 'nana',
+      ジャンル: 'オリジナル',
+      イベント: 'コミックマーケット108',
+    },
+  };
+
+  assert.equal(
+    buildTitle(product),
+    '(C108) [Lunaberry (nana)] Nosleeve Oblige (オリジナル)'
+  );
+  assert.equal(
+    buildTitle(product, { includeBracketedContent: true }),
+    '(C108) [Lunaberry (nana)] Nosleeve Oblige【メロン限定特典付】 (オリジナル)'
   );
 });
 
