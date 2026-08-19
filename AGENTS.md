@@ -21,35 +21,40 @@ The userscript is organized in the following order:
 
 1. metadata block and constants
 2. Melonbooks site definition
-3. pure normalization and title-building helpers
-4. site and DOM extraction helpers
-5. cover discovery and download helpers
-6. UI state and event handlers
-7. startup and CommonJS test exports
+3. settings defaults, validation, and persistent storage helpers
+4. pure normalization and title-building helpers
+5. site and DOM extraction helpers
+6. cover discovery and download helpers
+7. page UI and Shadow DOM settings dialog
+8. startup and CommonJS test exports
 
 Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title formatting and filename handling independent of the DOM so they can be tested in Node.
 
 ## Preserved behavior
 
-- Output format: `(イベント) [サークル (作家)] タイトル (ジャンル)`.
+- Default output format: `(イベント) [サークル (作家)] タイトル (ジャンル)`.
+- The settings dialog may omit event, circle, author, or genre from the composed title, but must always retain the product title.
 - If a circle exists without an author, preserve the empty `()` author placeholder.
-- Include the genre when the page provides one, including `オリジナル`.
+- Include the genre by default when the page provides one, including `オリジナル`.
 - Completed buttons remain clickable; only an active download temporarily disables its button.
 - Keep the primary copy and download buttons content-sized so their widths adapt to the displayed text.
 - Do not inject the action container more than once.
 - Use the cover's detected image type for its filename extension.
 - Replace the storefront's main heading text with the effective full archive title while preserving the heading element and its original styling.
-- Include full-width `【...】` segments in the product title by default; hide them when the user clears the option.
+- Include full-width `【...】` segments in the product title by default; allow the persistent setting to change the checkbox's initial state and the page checkbox to change the current state.
 - Keep the replaced heading, copied title, and downloaded filename synchronized with that option.
-- Always show fixed-size field buttons for event, circle, author, title, and genre on the right side of the main product metadata.
+- Show fixed-size field buttons for event, circle, author, title, and genre on the right side of the main product metadata when the corresponding setting is enabled.
 - When a normalized field is empty, show `无{字段}信息`, apply the unavailable appearance, and disable its copy action.
 - Display each field button as `label：value`; visually truncate overflow without changing the copied value.
 - Each field-copy button copies only its normalized value without the full-title punctuation wrappers.
 - Show the bracket option only when the original product title contains a paired full-width `【...】` segment, and place it after the two primary buttons in the same row.
 - Label the bracket option `表示【】内容`.
-- Normalize the detail table's `発行日` to `YYYY年MM月DD日` and display it directly above the storefront's existing `発売日` line.
-- Make only the main product price clickable and keyboard-accessible; copy its current value as digits only without changing the displayed price text.
-- Move the original favorite-circle and wishlist action group immediately above the delivery-method accordion without cloning or replacing its nodes.
+- When enabled, normalize the detail table's `発行日` to `YYYY年MM月DD日` and display it directly above the storefront's existing `発売日` line.
+- When enabled, make only the main product price clickable and keyboard-accessible; copy its current value as digits only without changing the displayed price text.
+- When enabled, move the original favorite-circle and wishlist action group immediately above the delivery-method accordion without cloning or replacing its nodes.
+- Register one Tampermonkey menu command that opens an accessible, Shadow DOM-isolated settings dialog.
+- Persist only validated known boolean settings. Merge missing settings with defaults and remove storage when every value equals its default.
+- Apply saved settings after saving and refreshing the current product page.
 - Button status text must not append the generated title.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
@@ -58,6 +63,7 @@ Treat changes to these behaviors as product decisions rather than cleanup.
 
 - Keep `@namespace` under `https://github.com/uyuni-saline`.
 - Keep `@homepageURL`, `@supportURL`, `@updateURL`, and `@downloadURL` aligned with this repository.
+- Keep the grants required for the settings menu and storage: `GM_registerMenuCommand`, `GM_getValue`, `GM_setValue`, and `GM_deleteValue`.
 - Increment `@version` for every released userscript change, using semantic versioning.
 - Prefer narrow `@match` entries and retain the runtime URL validation in `getSiteDefinition`.
 - `@connect *` currently supports cover images served from changing third-party CDNs. If it is narrowed, verify real cover hosts on both supported Melonbooks detail paths first.
@@ -85,20 +91,23 @@ Before a release, test currently available product pages for both supported path
 Confirm the following:
 
 - buttons appear once and in the intended location;
+- the Tampermonkey menu opens only one settings dialog, whose save, cancel, reset, backdrop, and Escape interactions work;
+- saved settings survive reloads, invalid stored values fall back safely, and a fully default configuration removes its stored value;
 - the storefront heading element keeps its original styling while its text becomes the full archive title;
-- event, circle, author, title, and genre always get one fixed-size button in a vertical group on the right side of the product metadata;
+- when enabled, event, circle, author, title, and genre each get one fixed-size button in a vertical group on the right side of the product metadata;
 - empty fields display a visually distinct `无{字段}信息` button whose copy action is disabled;
 - every field button copies only its normalized field value;
-- the full-width bracket option appears only for applicable original titles, follows the primary buttons, is checked by default, and updates the heading and title field immediately;
+- the full-width bracket option appears only for applicable original titles, follows the primary buttons, uses the saved default, and updates the heading and title field immediately;
+- title-format settings independently omit event, circle, author, and genre while always retaining the product title;
 - extracted event, circle, author, title, and genre are not duplicated;
 - both buttons copy the title currently shown in the heading without appending it to button text;
 - both primary buttons adapt their widths to their current status text;
-- clicking the main product price, or activating it with Enter or Space, copies digits only and does not affect prices in related-product lists;
-- the normalized `発行日` appears immediately above `発売日` when the source field is present;
+- when enabled, clicking the main product price, or activating it with Enter or Space, copies digits only and does not affect prices in related-product lists;
+- when enabled, the normalized `発行日` appears immediately above `発売日` when the source field is present;
 - a cover downloads with a sanitized filename and correct extension;
 - busy, success, missing-cover, and download-error states remain understandable;
-- keyboard focus and activation work on both buttons.
-- the original favorite-circle and wishlist controls retain their behavior after moving above the delivery-method accordion.
+- keyboard focus and activation work on both buttons;
+- when enabled, the original favorite-circle and wishlist controls retain their behavior after moving above the delivery-method accordion.
 
 Actual storefront HTML can change independently of this repository, so Node tests do not replace this manual verification.
 
