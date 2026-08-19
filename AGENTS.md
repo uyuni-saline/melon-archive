@@ -38,11 +38,12 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Do not inject the action container more than once.
 - Use the cover's detected image type for its filename extension.
 - Replace the storefront's main heading text with the effective full archive title while preserving the heading element and its original styling.
-- Exclude full-width `【...】` segments from the product title by default; include them only when the user checks the option.
+- Include full-width `【...】` segments in the product title by default; hide them when the user clears the option.
 - Keep the replaced heading, copied title, and downloaded filename synchronized with that option.
-- Add field-copy buttons for event, circle, author, title, and genre immediately after the download button, omitting buttons whose normalized field is empty.
+- Add fixed-size field-copy buttons for event, circle, author, title, and genre to the right side of the main product metadata, omitting buttons whose normalized field is empty.
+- Display each field button as `label：value`; visually truncate overflow without changing the copied value.
 - Each field-copy button copies only its normalized value without the full-title punctuation wrappers.
-- Show the bracket option only when the original product title contains a paired full-width `【...】` segment, and place it after the field-copy buttons in the same row.
+- Show the bracket option only when the original product title contains a paired full-width `【...】` segment, and place it after the two primary buttons in the same row.
 - Button status text must not append the generated title.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
@@ -79,10 +80,10 @@ Confirm the following:
 
 - buttons appear once and in the intended location;
 - the storefront heading element keeps its original styling while its text becomes the full archive title;
-- non-empty event, circle, author, title, and genre fields each get one copy button after the download button;
+- non-empty event, circle, author, title, and genre fields each get one fixed-size copy button in a vertical group on the right side of the product metadata;
 - empty fields do not produce copy buttons;
 - every field button copies only its normalized field value;
-- the full-width bracket option appears only for applicable original titles, follows the field buttons, is unchecked by default, and updates the heading and title field immediately;
+- the full-width bracket option appears only for applicable original titles, follows the primary buttons, is checked by default, and updates the heading and title field immediately;
 - extracted event, circle, author, title, and genre are not duplicated;
 - both buttons copy the title currently shown in the heading without appending it to button text;
 - a cover downloads with a sanitized filename and correct extension;
