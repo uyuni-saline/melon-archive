@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.4.0
+// @version      1.5.0
 // @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -36,11 +36,17 @@
     titleSelector: '.page-header',
     rowSelector: '.item-detail .table-wrapper tr',
     fieldPanelSelector: '.item-metas-wrap .item-meta3',
+    favoriteActionSelector: '.item-metas-wrap .fav-button',
+    favoriteGroupSelector: '.item-metas-wrap .item-favorite',
+    deliveryTitleSelector: '.item-metas-wrap .delivery-accordion__title',
+    deliveryGroupSelector: '.item-metas-wrap .accordion-group',
     copyButtonColor: '#56C0CA',
     downloadButtonColor: '#F6BD57',
     actionTextColor: '#1f1f1f',
     fieldButtonColor: '#EDEADA',
     fieldButtonTextColor: '#00A667',
+    unavailableFieldButtonColor: '#F4F3EF',
+    unavailableFieldButtonTextColor: '#8A8A8A',
     coverSelectors: ['.main_image img', '.item-main img'],
   });
 
@@ -50,6 +56,11 @@
     { key: 'author', label: '作者' },
     { key: 'title', label: '标题' },
     { key: 'genre', label: '分类' },
+  ]);
+
+  const FAVORITE_ACTION_TEXTS = Object.freeze([
+    'お気に入りサークルに追加',
+    'ほしいものリストに追加',
   ]);
 
   const INVALID_FILENAME_CHARS = Object.freeze({
@@ -162,6 +173,8 @@
 #${FIELD_PANEL_ID} {
   --melon-archive-field-color: #EDEADA;
   --melon-archive-field-text: #00A667;
+  --melon-archive-field-unavailable-color: #F4F3EF;
+  --melon-archive-field-unavailable-text: #8A8A8A;
   float: right;
   clear: right;
   display: flex;
@@ -187,8 +200,14 @@
   text-overflow: ellipsis;
 }
 
-#${FIELD_PANEL_ID} .melon-archive-button--field[hidden] {
-  display: none;
+#${FIELD_PANEL_ID} .melon-archive-button--field.is-unavailable,
+#${FIELD_PANEL_ID} .melon-archive-button--field.is-unavailable:disabled {
+  border-color: #d8d5ca;
+  color: var(--melon-archive-field-unavailable-text);
+  background: var(--melon-archive-field-unavailable-color);
+  opacity: 1;
+  cursor: not-allowed;
+  filter: none;
 }
 
 #${FIELD_PANEL_ID}.melon-archive-fields--fallback {
@@ -330,6 +349,15 @@
   }
 
   /**
+   * 生成没有相应信息时的禁用按钮文字。
+   * @param {string} label
+   * @returns {string}
+   */
+  function formatUnavailableFieldButtonText(label) {
+    return `无${normalizeSpaces(label)}信息`;
+  }
+
+  /**
    * 根据已提取的页面信息生成归档标题。
    * @param {{rawTitle?: string, info?: Record<string, string>}} product
    * @param {{includeBracketedContent?: boolean}} [options]
@@ -396,6 +424,47 @@
         reject(new Error(`Element not found: ${selector}`));
       }, timeoutMs);
     });
+  }
+
+  /**
+   * 在指定选择器的元素中查找文本完全一致的一项。
+   * @param {string} selector
+   * @param {string} expectedText
+   * @returns {Element|null}
+   */
+  function findElementByNormalizedText(selector, expectedText) {
+    const compactExpectedText = normalizeSpaces(expectedText).replace(/\s/gu, '');
+    return (
+      [...document.querySelectorAll(selector)].find(
+        (element) =>
+          normalizeSpaces(element.textContent).replace(/\s/gu, '') === compactExpectedText
+      ) ?? null
+    );
+  }
+
+  /**
+   * 保留原站按钮节点和事件，将收藏操作整体移动到配送方法区域上方。
+   * @param {typeof SITE_DEFINITION} site
+   * @returns {boolean}
+   */
+  function moveFavoriteActions(site) {
+    const favoriteButtons = FAVORITE_ACTION_TEXTS.map((text) =>
+      findElementByNormalizedText(site.favoriteActionSelector, text)
+    );
+    if (favoriteButtons.some((button) => !button)) return false;
+
+    const favoriteGroup = favoriteButtons[0].closest(site.favoriteGroupSelector);
+    const belongsToSameGroup = favoriteButtons.every(
+      (button) => button.closest(site.favoriteGroupSelector) === favoriteGroup
+    );
+    if (!favoriteGroup || !belongsToSameGroup) return false;
+
+    const deliveryTitle = findElementByNormalizedText(site.deliveryTitleSelector, '配送方法');
+    const deliveryGroup = deliveryTitle?.closest(site.deliveryGroupSelector);
+    if (!deliveryGroup) return false;
+
+    deliveryGroup.before(favoriteGroup);
+    return true;
   }
 
   /**
@@ -740,6 +809,14 @@
       fieldPanel.setAttribute('aria-label', '单项信息复制');
       fieldPanel.style.setProperty('--melon-archive-field-color', site.fieldButtonColor);
       fieldPanel.style.setProperty('--melon-archive-field-text', site.fieldButtonTextColor);
+      fieldPanel.style.setProperty(
+        '--melon-archive-field-unavailable-color',
+        site.unavailableFieldButtonColor
+      );
+      fieldPanel.style.setProperty(
+        '--melon-archive-field-unavailable-text',
+        site.unavailableFieldButtonTextColor
+      );
 
       const fieldButtons = FIELD_COPY_BUTTONS.map(({ key, label }) => {
         const button = createButton('', 'field');
@@ -751,9 +828,12 @@
         const parts = getCurrentParts();
         for (const { key, label, button } of fieldButtons) {
           const value = parts[key];
-          button.hidden = !value;
-          if (!value) continue;
-          const text = formatFieldButtonText(label, value);
+          const isAvailable = Boolean(value);
+          const text = isAvailable
+            ? formatFieldButtonText(label, value)
+            : formatUnavailableFieldButtonText(label);
+          button.disabled = !isAvailable;
+          button.classList.toggle('is-unavailable', !isAvailable);
           button.textContent = text;
           button.title = text;
           button.dataset.defaultText = text;
@@ -783,19 +863,17 @@
       container.append(buttonGroup);
       anchor.after(container);
       updateFieldButtons();
-      const visibleFieldButtons = fieldButtons
-        .map(({ button }) => button)
-        .filter((button) => !button.hidden);
-      if (fieldPanelTarget && visibleFieldButtons.length > 0) {
-        fieldPanel.append(...visibleFieldButtons);
+      const fieldButtonElements = fieldButtons.map(({ button }) => button);
+      fieldPanel.append(...fieldButtonElements);
+      if (fieldPanelTarget) {
         fieldPanelTarget.classList.add('melon-archive-has-fields');
         fieldPanelTarget.prepend(fieldPanel);
-      } else if (visibleFieldButtons.length > 0) {
+      } else {
         fieldPanel.classList.add('melon-archive-fields--fallback');
-        fieldPanel.append(...visibleFieldButtons);
         container.append(fieldPanel);
       }
       updatePageTitle();
+      moveFavoriteActions(site);
     } catch (error) {
       console.error(`[${SCRIPT_LABEL}] UI injection failed.`, error);
       notify(`按钮注入失败：${error instanceof Error ? error.message : String(error)}`);
@@ -815,9 +893,11 @@
       buildTitle,
       buildTitleParts,
       formatFieldButtonText,
+      formatUnavailableFieldButtonText,
       getSiteDefinition,
       hasBracketedContent,
       inferImageExtension,
+      moveFavoriteActions,
       normalizeEventName,
       normalizeSpaces,
       sanitizeFilename,
