@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.6.0
+// @version      1.7.0
 // @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -37,6 +37,7 @@
     titleSelector: '.page-header',
     rowSelector: '.item-detail .table-wrapper tr',
     releaseDateSelector: '.item-metas-wrap .product-info__release-date',
+    priceSelector: '.item-metas-wrap .item-meta3 .price--value',
     fieldPanelSelector: '.item-metas-wrap .item-meta3',
     favoriteActionSelector: '.item-metas-wrap .fav-button',
     favoriteGroupSelector: '.item-metas-wrap .item-favorite',
@@ -139,27 +140,13 @@
 }
 
 .melon-archive-button--copy {
-  flex: 0 0 120px;
-  width: 120px;
-  height: 35px;
-  padding: 0 10px;
   color: var(--melon-archive-action-text);
   background: var(--melon-archive-copy-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .melon-archive-button--download {
-  flex: 0 0 180px;
-  width: 180px;
-  height: 35px;
-  padding: 0 10px;
   color: var(--melon-archive-action-text);
   background: var(--melon-archive-download-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .melon-archive-button:hover {
@@ -180,6 +167,25 @@
 
 .melon-archive-button.is-done {
   filter: saturate(.78);
+}
+
+.melon-archive-price-copy {
+  border-radius: 2px;
+  cursor: copy;
+  transition: background-color .15s ease, opacity .15s ease;
+}
+
+.melon-archive-price-copy:hover {
+  background: rgba(86, 192, 202, .16);
+}
+
+.melon-archive-price-copy:active {
+  opacity: .65;
+}
+
+.melon-archive-price-copy:focus-visible {
+  outline: 2px solid #1967d2;
+  outline-offset: 2px;
 }
 
 .melon-archive-has-fields {
@@ -294,6 +300,15 @@
     if (!isValidDate) return '';
 
     return `${year}年${String(month).padStart(2, '0')}月${String(day).padStart(2, '0')}日`;
+  }
+
+  /**
+   * 从价格文本中提取可直接用于记录或计算的纯数字金额。
+   * @param {unknown} value
+   * @returns {string}
+   */
+  function extractNumericPrice(value) {
+    return String(value ?? '').replace(/[^\d]/gu, '');
   }
 
   /**
@@ -596,6 +611,36 @@
   }
 
   /**
+   * 为商品主价格启用鼠标和键盘复制，不修改页面显示的价格格式。
+   * @param {typeof SITE_DEFINITION} site
+   * @returns {boolean}
+   */
+  function enablePriceCopy(site) {
+    const priceElement = document.querySelector(site.priceSelector);
+    if (!priceElement || priceElement.dataset.melonArchiveCopyEnabled === 'true') return false;
+    if (!extractNumericPrice(priceElement.textContent)) return false;
+
+    const copyPrice = () => {
+      const price = extractNumericPrice(priceElement.textContent);
+      if (price) GM_setClipboard(price, 'text');
+    };
+
+    priceElement.dataset.melonArchiveCopyEnabled = 'true';
+    priceElement.classList.add('melon-archive-price-copy');
+    priceElement.tabIndex = 0;
+    priceElement.setAttribute('role', 'button');
+    priceElement.setAttribute('aria-label', '复制纯数字价格');
+    priceElement.title = '点击复制纯数字价格';
+    priceElement.addEventListener('click', copyPrice);
+    priceElement.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      copyPrice();
+    });
+    return true;
+  }
+
+  /**
    * 将可能的相对图片地址转换为绝对URL。
    * @param {unknown} value
    * @returns {string|null}
@@ -850,6 +895,7 @@
       const downloadButton = createButton('📥复制并下载封面', 'download');
       const product = extractProduct(site);
       insertIssueDate(site, product.info);
+      enablePriceCopy(site);
       let includeBracketedContent = true;
 
       const getCurrentOptions = () => ({ includeBracketedContent });
@@ -955,6 +1001,8 @@
     module.exports = {
       buildTitle,
       buildTitleParts,
+      enablePriceCopy,
+      extractNumericPrice,
       formatFieldButtonText,
       formatJapaneseDate,
       formatUnavailableFieldButtonText,

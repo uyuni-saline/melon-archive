@@ -6,6 +6,8 @@ const assert = require('node:assert/strict');
 const {
   buildTitle,
   buildTitleParts,
+  enablePriceCopy,
+  extractNumericPrice,
   formatFieldButtonText,
   formatJapaneseDate,
   formatUnavailableFieldButtonText,
@@ -43,6 +45,12 @@ test('formatJapaneseDate normalizes supported dates and rejects invalid values',
   assert.equal(formatJapaneseDate('2026年08月16日'), '2026年08月16日');
   assert.equal(formatJapaneseDate('2026-02-29'), '');
   assert.equal(formatJapaneseDate('未定'), '');
+});
+
+test('extractNumericPrice returns digits only', () => {
+  assert.equal(extractNumericPrice('1,100\u00a0'), '1100');
+  assert.equal(extractNumericPrice('¥ 12,345（税込）'), '12345');
+  assert.equal(extractNumericPrice('価格未定'), '');
 });
 
 test('sanitizeFilename replaces unsafe characters and protects reserved names', () => {
@@ -147,6 +155,7 @@ test('getSiteDefinition accepts supported product URLs only', () => {
   );
   assert.equal(site?.titleSelector, '.page-header');
   assert.equal(site?.releaseDateSelector, '.item-metas-wrap .product-info__release-date');
+  assert.equal(site?.priceSelector, '.item-metas-wrap .item-meta3 .price--value');
   assert.equal(site?.fieldPanelSelector, '.item-metas-wrap .item-meta3');
   assert.equal(site?.favoriteGroupSelector, '.item-metas-wrap .item-favorite');
   assert.equal(site?.deliveryTitleSelector, '.item-metas-wrap .delivery-accordion__title');
@@ -154,6 +163,51 @@ test('getSiteDefinition accepts supported product URLs only', () => {
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/'), null);
   assert.equal(getSiteDefinition('not a URL'), null);
+});
+
+test('enablePriceCopy copies the current main price with mouse and keyboard', (t) => {
+  const originalDocument = global.document;
+  const originalClipboard = global.GM_setClipboard;
+  t.after(() => {
+    if (originalDocument === undefined) delete global.document;
+    else global.document = originalDocument;
+    if (originalClipboard === undefined) delete global.GM_setClipboard;
+    else global.GM_setClipboard = originalClipboard;
+  });
+
+  const listeners = {};
+  const attributes = {};
+  const addedClasses = [];
+  const priceElement = {
+    textContent: '1,100\u00a0',
+    dataset: {},
+    classList: { add: (name) => addedClasses.push(name) },
+    setAttribute: (name, value) => {
+      attributes[name] = value;
+    },
+    addEventListener: (name, listener) => {
+      listeners[name] = listener;
+    },
+  };
+  const copied = [];
+  global.document = { querySelector: () => priceElement };
+  global.GM_setClipboard = (value, type) => copied.push([value, type]);
+
+  const site = getSiteDefinition(
+    'https://www.melonbooks.co.jp/products/detail.php?product_id=123'
+  );
+  assert.equal(enablePriceCopy(site), true);
+  assert.equal(priceElement.tabIndex, 0);
+  assert.equal(attributes.role, 'button');
+  assert.deepEqual(addedClasses, ['melon-archive-price-copy']);
+
+  listeners.click();
+  priceElement.textContent = '2,200';
+  let prevented = false;
+  listeners.keydown({ key: 'Enter', preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.deepEqual(copied, [['1100', 'text'], ['2200', 'text']]);
+  assert.equal(enablePriceCopy(site), false);
 });
 
 test('insertIssueDate places the normalized issue date above the release date', (t) => {

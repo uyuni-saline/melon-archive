@@ -35,7 +35,7 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - If a circle exists without an author, preserve the empty `()` author placeholder.
 - Include the genre when the page provides one, including `オリジナル`.
 - Completed buttons remain clickable; only an active download temporarily disables its button.
-- Keep the primary copy and download buttons at fixed dimensions across their default, busy, success, and error states.
+- Keep the primary copy and download buttons content-sized so their widths adapt to the displayed text.
 - Do not inject the action container more than once.
 - Use the cover's detected image type for its filename extension.
 - Replace the storefront's main heading text with the effective full archive title while preserving the heading element and its original styling.
@@ -48,6 +48,7 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Show the bracket option only when the original product title contains a paired full-width `【...】` segment, and place it after the two primary buttons in the same row.
 - Label the bracket option `表示【】内容`.
 - Normalize the detail table's `発行日` to `YYYY年MM月DD日` and display it directly above the storefront's existing `発売日` line.
+- Make only the main product price clickable and keyboard-accessible; copy its current value as digits only without changing the displayed price text.
 - Move the original favorite-circle and wishlist action group immediately above the delivery-method accordion without cloning or replacing its nodes.
 - Button status text must not append the generated title.
 
@@ -91,7 +92,8 @@ Confirm the following:
 - the full-width bracket option appears only for applicable original titles, follows the primary buttons, is checked by default, and updates the heading and title field immediately;
 - extracted event, circle, author, title, and genre are not duplicated;
 - both buttons copy the title currently shown in the heading without appending it to button text;
-- both primary buttons keep the same dimensions when their status text changes;
+- both primary buttons adapt their widths to their current status text;
+- clicking the main product price, or activating it with Enter or Space, copies digits only and does not affect prices in related-product lists;
 - the normalized `発行日` appears immediately above `発売日` when the source field is present;
 - a cover downloads with a sanitized filename and correct extension;
 - busy, success, missing-cover, and download-error states remain understandable;
