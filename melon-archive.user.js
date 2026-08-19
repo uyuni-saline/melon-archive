@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.7.0
+// @version      1.8.0
 // @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -12,8 +12,12 @@
 // @match        https://www.melonbooks.co.jp/products/detail.php*
 // @connect      *
 // @grant        GM_addStyle
+// @grant        GM_deleteValue
+// @grant        GM_getValue
 // @grant        GM_notification
+// @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
+// @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @run-at       document-idle
 // @noframes
@@ -26,9 +30,37 @@
   const UI_ID = 'melon-archive-actions';
   const FIELD_PANEL_ID = 'melon-archive-fields';
   const ISSUE_DATE_ID = 'melon-archive-issue-date';
+  const SETTINGS_MODAL_ID = 'melon-archive-settings-host';
+  const SETTINGS_STORAGE_KEY = 'settings';
+  const SETTINGS_SCHEMA_VERSION = 1;
   const AUTHOR_PLACEHOLDER = true;
   const ELEMENT_WAIT_TIMEOUT_MS = 12_000;
   const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+  const DEFAULT_SETTINGS = Object.freeze({
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    includeBracketedContent: true,
+    enablePriceCopy: true,
+    showIssueDate: true,
+    moveFavoriteActions: true,
+    showFieldButtons: true,
+    includeEvent: true,
+    includeCircle: true,
+    includeAuthor: true,
+    includeGenre: true,
+  });
+
+  const SETTINGS_BOOLEAN_KEYS = Object.freeze([
+    'includeBracketedContent',
+    'enablePriceCopy',
+    'showIssueDate',
+    'moveFavoriteActions',
+    'showFieldButtons',
+    'includeEvent',
+    'includeCircle',
+    'includeAuthor',
+    'includeGenre',
+  ]);
 
   const SITE_DEFINITION = Object.freeze({
     hostnames: ['www.melonbooks.co.jp'],
@@ -247,6 +279,147 @@
 }
 `;
 
+  const SETTINGS_STYLES = `
+:host {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  color: #222;
+  background: rgba(0, 0, 0, .48);
+  font: 14px/1.55 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+}
+
+.dialog {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .28);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e6e6e6;
+  padding: 16px 18px;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.close {
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  color: #555;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: #f1f1f1;
+}
+
+.body {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #dedede;
+  border-radius: 6px;
+  padding: 12px 14px 14px;
+}
+
+legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #56C0CA;
+}
+
+.hint {
+  margin: 0;
+  color: #666;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #e6e6e6;
+  padding: 14px 18px;
+}
+
+.actions button {
+  appearance: none;
+  min-height: 36px;
+  border: 1px solid #cfcfcf;
+  border-radius: 4px;
+  padding: 7px 14px;
+  color: #222;
+  background: #f6f6f6;
+  font: 600 13px/1.4 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+  cursor: pointer;
+}
+
+.actions button:hover,
+.actions button:focus-visible,
+.close:focus-visible,
+.option:has(input:focus-visible) {
+  outline: 2px solid #1967d2;
+  outline-offset: 2px;
+}
+
+.actions .save {
+  border-color: #46aeb8;
+  background: #56C0CA;
+}
+`;
+
   /**
    * 将全角空格与连续空白规范化为单个半角空格。
    * @param {unknown} value
@@ -257,6 +430,45 @@
       .replace(/\u3000/gu, ' ')
       .replace(/\s+/gu, ' ')
       .trim();
+  }
+
+  /**
+   * 只接受已知布尔设置，并为缺失或无效值补充默认值。
+   * @param {unknown} value
+   * @returns {typeof DEFAULT_SETTINGS}
+   */
+  function normalizeSettings(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const settings = { schemaVersion: SETTINGS_SCHEMA_VERSION };
+
+    for (const key of SETTINGS_BOOLEAN_KEYS) {
+      settings[key] = typeof source[key] === 'boolean' ? source[key] : DEFAULT_SETTINGS[key];
+    }
+
+    return settings;
+  }
+
+  /**
+   * @returns {typeof DEFAULT_SETTINGS}
+   */
+  function loadSettings() {
+    return normalizeSettings(GM_getValue(SETTINGS_STORAGE_KEY, {}));
+  }
+
+  /**
+   * 默认配置不占用持久化空间；其他配置按统一结构保存。
+   * @param {unknown} value
+   * @returns {typeof DEFAULT_SETTINGS}
+   */
+  function saveSettings(value) {
+    const settings = normalizeSettings(value);
+    const usesDefaults = SETTINGS_BOOLEAN_KEYS.every(
+      (key) => settings[key] === DEFAULT_SETTINGS[key]
+    );
+
+    if (usesDefaults) GM_deleteValue(SETTINGS_STORAGE_KEY);
+    else GM_setValue(SETTINGS_STORAGE_KEY, settings);
+    return settings;
   }
 
   /**
@@ -416,21 +628,29 @@
   /**
    * 根据已提取的页面信息生成归档标题。
    * @param {{rawTitle?: string, info?: Record<string, string>}} product
-   * @param {{includeBracketedContent?: boolean}} [options]
+   * @param {{includeBracketedContent?: boolean, includeEvent?: boolean, includeCircle?: boolean, includeAuthor?: boolean, includeGenre?: boolean}} [options]
    * @returns {string}
    */
   function buildTitle(product, options = {}) {
-    const { event, circle, author, title, genre } = buildTitleParts(product, options);
+    const parts = buildTitleParts(product, options);
+    const event = options.includeEvent === false ? '' : parts.event;
+    const circle = options.includeCircle === false ? '' : parts.circle;
+    const author = options.includeAuthor === false ? '' : parts.author;
+    const genre = options.includeGenre === false ? '' : parts.genre;
 
     let creatorPart = '';
     if (circle) {
-      const authorPart = author ? ` (${author})` : AUTHOR_PLACEHOLDER ? ' ()' : '';
+      let authorPart = '';
+      if (options.includeAuthor !== false) {
+        if (author) authorPart = ` (${author})`;
+        else if (AUTHOR_PLACEHOLDER) authorPart = ' ()';
+      }
       creatorPart = `[${circle}${authorPart}]`;
     } else if (author) {
       creatorPart = `[${author}]`;
     }
 
-    return [event ? `(${event})` : '', creatorPart, title, genre ? `(${genre})` : '']
+    return [event ? `(${event})` : '', creatorPart, parts.title, genre ? `(${genre})` : '']
       .filter(Boolean)
       .join(' ');
   }
@@ -872,9 +1092,116 @@
   }
 
   /**
-   * @param {typeof SITE_DEFINITION} site
+   * @param {HTMLFormElement} form
+   * @param {typeof DEFAULT_SETTINGS} settings
    */
-  async function injectUi(site) {
+  function writeSettingsForm(form, settings) {
+    for (const input of form.querySelectorAll('input[data-setting]')) {
+      input.checked = Boolean(settings[input.dataset.setting]);
+    }
+  }
+
+  /**
+   * @param {HTMLFormElement} form
+   * @returns {typeof DEFAULT_SETTINGS}
+   */
+  function readSettingsForm(form) {
+    const settings = { schemaVersion: SETTINGS_SCHEMA_VERSION };
+    for (const input of form.querySelectorAll('input[data-setting]')) {
+      settings[input.dataset.setting] = input.checked;
+    }
+    return normalizeSettings(settings);
+  }
+
+  /**
+   * 在Shadow DOM中显示设置窗口，避免与商店页面样式相互影响。
+   * @returns {boolean}
+   */
+  function openSettingsDialog() {
+    if (document.getElementById(SETTINGS_MODAL_ID)) return false;
+
+    const previousFocus = document.activeElement;
+    const host = document.createElement('div');
+    host.id = SETTINGS_MODAL_ID;
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>${SETTINGS_STYLES}</style>
+      <div class="backdrop">
+        <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="melon-archive-settings-title">
+          <header class="header">
+            <h2 id="melon-archive-settings-title">⚙️ Melon Archive 设置</h2>
+            <button class="close" type="button" data-action="close" aria-label="关闭设置">×</button>
+          </header>
+          <form>
+            <div class="body">
+              <fieldset>
+                <legend>页面功能</legend>
+                <label class="option"><input type="checkbox" data-setting="includeBracketedContent">默认表示【】内容</label>
+                <label class="option"><input type="checkbox" data-setting="enablePriceCopy">启用价格点击复制</label>
+                <label class="option"><input type="checkbox" data-setting="showIssueDate">显示発行日</label>
+                <label class="option"><input type="checkbox" data-setting="moveFavoriteActions">移动收藏与愿望单按钮</label>
+                <label class="option"><input type="checkbox" data-setting="showFieldButtons">显示五个字段复制按钮</label>
+              </fieldset>
+              <fieldset>
+                <legend>拼接标题格式</legend>
+                <label class="option"><input type="checkbox" data-setting="includeEvent">包含展会</label>
+                <label class="option"><input type="checkbox" data-setting="includeCircle">包含社团</label>
+                <label class="option"><input type="checkbox" data-setting="includeAuthor">包含作者</label>
+                <label class="option"><input type="checkbox" data-setting="includeGenre">包含分类</label>
+                <p class="hint">商品标题始终保留。设置保存后将刷新当前页面。</p>
+              </fieldset>
+            </div>
+            <footer class="actions">
+              <button type="button" data-action="reset">恢复默认</button>
+              <button type="button" data-action="close">取消</button>
+              <button class="save" type="submit">保存并刷新</button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    `;
+
+    const form = shadow.querySelector('form');
+    const backdrop = shadow.querySelector('.backdrop');
+    writeSettingsForm(form, loadSettings());
+
+    const close = () => {
+      host.remove();
+      previousFocus?.focus?.();
+    };
+
+    for (const button of shadow.querySelectorAll('[data-action="close"]')) {
+      button.addEventListener('click', close);
+    }
+    shadow.querySelector('[data-action="reset"]').addEventListener('click', () => {
+      writeSettingsForm(form, DEFAULT_SETTINGS);
+    });
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+    host.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      saveSettings(readSettingsForm(form));
+      window.location.reload();
+    });
+
+    document.documentElement.append(host);
+    shadow.querySelector('input[data-setting]')?.focus();
+    return true;
+  }
+
+  function registerSettingsMenu() {
+    GM_registerMenuCommand('⚙️ Melon Archive 设置', openSettingsDialog);
+  }
+
+  /**
+   * @param {typeof SITE_DEFINITION} site
+   * @param {typeof DEFAULT_SETTINGS} settings
+   */
+  async function injectUi(site, settings) {
     if (document.getElementById(UI_ID)) return;
 
     try {
@@ -894,12 +1221,19 @@
       const copyButton = createButton('📋复制信息', 'copy');
       const downloadButton = createButton('📥复制并下载封面', 'download');
       const product = extractProduct(site);
-      insertIssueDate(site, product.info);
-      enablePriceCopy(site);
-      let includeBracketedContent = true;
+      if (settings.showIssueDate) insertIssueDate(site, product.info);
+      if (settings.enablePriceCopy) enablePriceCopy(site);
+      let includeBracketedContent = settings.includeBracketedContent;
 
-      const getCurrentOptions = () => ({ includeBracketedContent });
-      const getCurrentParts = () => buildTitleParts(product, getCurrentOptions());
+      const getCurrentOptions = () => ({
+        includeBracketedContent,
+        includeEvent: settings.includeEvent,
+        includeCircle: settings.includeCircle,
+        includeAuthor: settings.includeAuthor,
+        includeGenre: settings.includeGenre,
+      });
+      const getCurrentParts = () =>
+        buildTitleParts(product, { includeBracketedContent });
       const getCurrentTitle = () => buildTitle(product, getCurrentOptions());
       const updatePageTitle = () => {
         const title = getCurrentTitle();
@@ -956,7 +1290,7 @@
         optionLabel.className = 'melon-archive-option';
         const includeBracketedCheckbox = document.createElement('input');
         includeBracketedCheckbox.type = 'checkbox';
-        includeBracketedCheckbox.checked = true;
+        includeBracketedCheckbox.checked = settings.includeBracketedContent;
         const optionText = document.createElement('span');
         optionText.textContent = '表示【】内容';
         optionLabel.append(includeBracketedCheckbox, optionText);
@@ -971,18 +1305,20 @@
 
       container.append(buttonGroup);
       anchor.after(container);
-      updateFieldButtons();
-      const fieldButtonElements = fieldButtons.map(({ button }) => button);
-      fieldPanel.append(...fieldButtonElements);
-      if (fieldPanelTarget) {
-        fieldPanelTarget.classList.add('melon-archive-has-fields');
-        fieldPanelTarget.prepend(fieldPanel);
-      } else {
-        fieldPanel.classList.add('melon-archive-fields--fallback');
-        container.append(fieldPanel);
+      if (settings.showFieldButtons) {
+        updateFieldButtons();
+        const fieldButtonElements = fieldButtons.map(({ button }) => button);
+        fieldPanel.append(...fieldButtonElements);
+        if (fieldPanelTarget) {
+          fieldPanelTarget.classList.add('melon-archive-has-fields');
+          fieldPanelTarget.prepend(fieldPanel);
+        } else {
+          fieldPanel.classList.add('melon-archive-fields--fallback');
+          container.append(fieldPanel);
+        }
       }
       updatePageTitle();
-      moveFavoriteActions(site);
+      if (settings.moveFavoriteActions) moveFavoriteActions(site);
     } catch (error) {
       console.error(`[${SCRIPT_LABEL}] UI injection failed.`, error);
       notify(`按钮注入失败：${error instanceof Error ? error.message : String(error)}`);
@@ -990,10 +1326,12 @@
   }
 
   function main() {
+    registerSettingsMenu();
     const site = getSiteDefinition(window.location.href);
     if (!site) return;
+    const settings = loadSettings();
     GM_addStyle(STYLES);
-    void injectUi(site);
+    void injectUi(site, settings);
   }
 
   // 仅供Node内置测试运行；用户脚本环境不会进入此分支。
@@ -1012,7 +1350,9 @@
       insertIssueDate,
       moveFavoriteActions,
       normalizeEventName,
+      normalizeSettings,
       normalizeSpaces,
+      saveSettings,
       sanitizeFilename,
       stripBracketedContent,
     };

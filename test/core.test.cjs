@@ -17,7 +17,9 @@ const {
   insertIssueDate,
   moveFavoriteActions,
   normalizeEventName,
+  normalizeSettings,
   normalizeSpaces,
+  saveSettings,
   sanitizeFilename,
   stripBracketedContent,
 } = require('../melon-archive.user.js');
@@ -51,6 +53,55 @@ test('extractNumericPrice returns digits only', () => {
   assert.equal(extractNumericPrice('1,100\u00a0'), '1100');
   assert.equal(extractNumericPrice('¥ 12,345（税込）'), '12345');
   assert.equal(extractNumericPrice('価格未定'), '');
+});
+
+test('normalizeSettings validates known options and fills defaults', () => {
+  assert.deepEqual(
+    normalizeSettings({
+      includeBracketedContent: false,
+      enablePriceCopy: 'no',
+      includeGenre: false,
+      unknownOption: true,
+    }),
+    {
+      schemaVersion: 1,
+      includeBracketedContent: false,
+      enablePriceCopy: true,
+      showIssueDate: true,
+      moveFavoriteActions: true,
+      showFieldButtons: true,
+      includeEvent: true,
+      includeCircle: true,
+      includeAuthor: true,
+      includeGenre: false,
+    }
+  );
+});
+
+test('saveSettings removes defaults and persists a normalized custom configuration', (t) => {
+  const originalDeleteValue = global.GM_deleteValue;
+  const originalSetValue = global.GM_setValue;
+  t.after(() => {
+    if (originalDeleteValue === undefined) delete global.GM_deleteValue;
+    else global.GM_deleteValue = originalDeleteValue;
+    if (originalSetValue === undefined) delete global.GM_setValue;
+    else global.GM_setValue = originalSetValue;
+  });
+
+  const deleted = [];
+  const saved = [];
+  global.GM_deleteValue = (key) => deleted.push(key);
+  global.GM_setValue = (key, value) => saved.push([key, value]);
+
+  saveSettings({});
+  const custom = saveSettings({ showIssueDate: false, unknownOption: true });
+
+  assert.deepEqual(deleted, ['settings']);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0][0], 'settings');
+  assert.deepEqual(saved[0][1], custom);
+  assert.equal(custom.showIssueDate, false);
+  assert.equal(Object.hasOwn(custom, 'unknownOption'), false);
 });
 
 test('sanitizeFilename replaces unsafe characters and protects reserved names', () => {
@@ -102,6 +153,36 @@ test('buildTitle includes full-width bracket content by default and can hide it'
   assert.equal(
     buildTitle(product, { includeBracketedContent: false }),
     '(C108) [Lunaberry (nana)] Nosleeve Oblige (オリジナル)'
+  );
+});
+
+test('buildTitle supports configurable optional fields while always retaining the title', () => {
+  const product = {
+    rawTitle: 'Nosleeve Oblige',
+    info: {
+      サークル名: 'Lunaberry',
+      作家名: 'nana',
+      ジャンル: 'オリジナル',
+      イベント: 'コミックマーケット108',
+    },
+  };
+
+  assert.equal(
+    buildTitle(product, { includeEvent: false, includeAuthor: false, includeGenre: false }),
+    '[Lunaberry] Nosleeve Oblige'
+  );
+  assert.equal(
+    buildTitle(product, { includeCircle: false }),
+    '(C108) [nana] Nosleeve Oblige (オリジナル)'
+  );
+  assert.equal(
+    buildTitle(product, {
+      includeEvent: false,
+      includeCircle: false,
+      includeAuthor: false,
+      includeGenre: false,
+    }),
+    'Nosleeve Oblige'
   );
 });
 
