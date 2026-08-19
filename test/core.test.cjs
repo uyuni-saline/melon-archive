@@ -7,9 +7,11 @@ const {
   buildTitle,
   buildTitleParts,
   formatFieldButtonText,
+  formatUnavailableFieldButtonText,
   getSiteDefinition,
   hasBracketedContent,
   inferImageExtension,
+  moveFavoriteActions,
   normalizeEventName,
   normalizeSpaces,
   sanitizeFilename,
@@ -111,6 +113,11 @@ test('formatFieldButtonText keeps the complete normalized value', () => {
   assert.equal(formatFieldButtonText(' 标题 ', ' 很长的\u3000标题 '), '标题：很长的 标题');
 });
 
+test('formatUnavailableFieldButtonText identifies the missing field', () => {
+  assert.equal(formatUnavailableFieldButtonText(' 作者 '), '无作者信息');
+  assert.equal(formatUnavailableFieldButtonText('展会'), '无展会信息');
+});
+
 test('buildTitle preserves the intentional blank author placeholder', () => {
   assert.equal(
     buildTitle({ rawTitle: 'タイトル', info: { サークル: 'サークルのみ' } }),
@@ -131,10 +138,56 @@ test('getSiteDefinition accepts supported product URLs only', () => {
   );
   assert.equal(site?.titleSelector, '.page-header');
   assert.equal(site?.fieldPanelSelector, '.item-metas-wrap .item-meta3');
+  assert.equal(site?.favoriteGroupSelector, '.item-metas-wrap .item-favorite');
+  assert.equal(site?.deliveryTitleSelector, '.item-metas-wrap .delivery-accordion__title');
   assert.equal(getSiteDefinition('https://example.com/detail/detail.php?product_id=123'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/'), null);
   assert.equal(getSiteDefinition('not a URL'), null);
+});
+
+test('moveFavoriteActions preserves and moves the original action group', (t) => {
+  const originalDocument = global.document;
+  t.after(() => {
+    if (originalDocument === undefined) delete global.document;
+    else global.document = originalDocument;
+  });
+
+  const favoriteGroup = {};
+  let movedNode = null;
+  const deliveryGroup = {
+    before(node) {
+      movedNode = node;
+    },
+  };
+  const favoriteButtons = [
+    {
+      textContent: 'お気に入り\nサークルに追加',
+      closest: () => favoriteGroup,
+    },
+    {
+      textContent: 'ほしいもの\nリストに追加',
+      closest: () => favoriteGroup,
+    },
+  ];
+  const deliveryTitle = {
+    textContent: '配送方法',
+    closest: () => deliveryGroup,
+  };
+
+  const site = getSiteDefinition(
+    'https://www.melonbooks.co.jp/detail/detail.php?product_id=123'
+  );
+  global.document = {
+    querySelectorAll(selector) {
+      if (selector === site.favoriteActionSelector) return favoriteButtons;
+      if (selector === site.deliveryTitleSelector) return [deliveryTitle];
+      return [];
+    },
+  };
+
+  assert.equal(moveFavoriteActions(site), true);
+  assert.equal(movedNode, favoriteGroup);
 });
 
 test('inferImageExtension prioritizes MIME type and falls back to URL', () => {

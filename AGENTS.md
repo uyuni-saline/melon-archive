@@ -40,10 +40,12 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Replace the storefront's main heading text with the effective full archive title while preserving the heading element and its original styling.
 - Include full-width `【...】` segments in the product title by default; hide them when the user clears the option.
 - Keep the replaced heading, copied title, and downloaded filename synchronized with that option.
-- Add fixed-size field-copy buttons for event, circle, author, title, and genre to the right side of the main product metadata, omitting buttons whose normalized field is empty.
+- Always show fixed-size field buttons for event, circle, author, title, and genre on the right side of the main product metadata.
+- When a normalized field is empty, show `无{字段}信息`, apply the unavailable appearance, and disable its copy action.
 - Display each field button as `label：value`; visually truncate overflow without changing the copied value.
 - Each field-copy button copies only its normalized value without the full-title punctuation wrappers.
 - Show the bracket option only when the original product title contains a paired full-width `【...】` segment, and place it after the two primary buttons in the same row.
+- Move the original favorite-circle and wishlist action group immediately above the delivery-method accordion without cloning or replacing its nodes.
 - Button status text must not append the generated title.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
@@ -80,8 +82,8 @@ Confirm the following:
 
 - buttons appear once and in the intended location;
 - the storefront heading element keeps its original styling while its text becomes the full archive title;
-- non-empty event, circle, author, title, and genre fields each get one fixed-size copy button in a vertical group on the right side of the product metadata;
-- empty fields do not produce copy buttons;
+- event, circle, author, title, and genre always get one fixed-size button in a vertical group on the right side of the product metadata;
+- empty fields display a visually distinct `无{字段}信息` button whose copy action is disabled;
 - every field button copies only its normalized field value;
 - the full-width bracket option appears only for applicable original titles, follows the primary buttons, is checked by default, and updates the heading and title field immediately;
 - extracted event, circle, author, title, and genre are not duplicated;
@@ -89,6 +91,7 @@ Confirm the following:
 - a cover downloads with a sanitized filename and correct extension;
 - busy, success, missing-cover, and download-error states remain understandable;
 - keyboard focus and activation work on both buttons.
+- the original favorite-circle and wishlist controls retain their behavior after moving above the delivery-method accordion.
 
 Actual storefront HTML can change independently of this repository, so Node tests do not replace this manual verification.
 
