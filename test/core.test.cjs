@@ -7,10 +7,12 @@ const {
   buildTitle,
   buildTitleParts,
   formatFieldButtonText,
+  formatJapaneseDate,
   formatUnavailableFieldButtonText,
   getSiteDefinition,
   hasBracketedContent,
   inferImageExtension,
+  insertIssueDate,
   moveFavoriteActions,
   normalizeEventName,
   normalizeSpaces,
@@ -34,6 +36,13 @@ test('hasBracketedContent requires a paired full-width bracket segment', () => {
   assert.equal(hasBracketedContent('标题【】'), true);
   assert.equal(hasBracketedContent('标题【特典'), false);
   assert.equal(hasBracketedContent('普通标题'), false);
+});
+
+test('formatJapaneseDate normalizes supported dates and rejects invalid values', () => {
+  assert.equal(formatJapaneseDate('2026/8/6'), '2026年08月06日');
+  assert.equal(formatJapaneseDate('2026年08月16日'), '2026年08月16日');
+  assert.equal(formatJapaneseDate('2026-02-29'), '');
+  assert.equal(formatJapaneseDate('未定'), '');
 });
 
 test('sanitizeFilename replaces unsafe characters and protects reserved names', () => {
@@ -137,6 +146,7 @@ test('getSiteDefinition accepts supported product URLs only', () => {
     'https://www.melonbooks.co.jp/products/detail.php?product_id=123'
   );
   assert.equal(site?.titleSelector, '.page-header');
+  assert.equal(site?.releaseDateSelector, '.item-metas-wrap .product-info__release-date');
   assert.equal(site?.fieldPanelSelector, '.item-metas-wrap .item-meta3');
   assert.equal(site?.favoriteGroupSelector, '.item-metas-wrap .item-favorite');
   assert.equal(site?.deliveryTitleSelector, '.item-metas-wrap .delivery-accordion__title');
@@ -144,6 +154,37 @@ test('getSiteDefinition accepts supported product URLs only', () => {
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/products/detail.php'), null);
   assert.equal(getSiteDefinition('https://www.melonbooks.co.jp/'), null);
   assert.equal(getSiteDefinition('not a URL'), null);
+});
+
+test('insertIssueDate places the normalized issue date above the release date', (t) => {
+  const originalDocument = global.document;
+  t.after(() => {
+    if (originalDocument === undefined) delete global.document;
+    else global.document = originalDocument;
+  });
+
+  let insertedNode = null;
+  const releaseDateElement = {
+    className: 'product-info__release-date',
+    before(node) {
+      insertedNode = node;
+    },
+  };
+  global.document = {
+    getElementById: () => null,
+    querySelector: () => releaseDateElement,
+    createElement: () => ({}),
+  };
+
+  const site = getSiteDefinition(
+    'https://www.melonbooks.co.jp/products/detail.php?product_id=123'
+  );
+  assert.equal(insertIssueDate(site, { 発行日: '2026/08/16' }), true);
+  assert.deepEqual(insertedNode, {
+    id: 'melon-archive-issue-date',
+    className: 'product-info__release-date',
+    textContent: '発行日：2026年08月16日',
+  });
 });
 
 test('moveFavoriteActions preserves and moves the original action group', (t) => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.5.0
+// @version      1.6.0
 // @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -25,6 +25,7 @@
   const SCRIPT_LABEL = 'Melon Archive';
   const UI_ID = 'melon-archive-actions';
   const FIELD_PANEL_ID = 'melon-archive-fields';
+  const ISSUE_DATE_ID = 'melon-archive-issue-date';
   const AUTHOR_PLACEHOLDER = true;
   const ELEMENT_WAIT_TIMEOUT_MS = 12_000;
   const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -35,6 +36,7 @@
     anchorSelector: '.page-header',
     titleSelector: '.page-header',
     rowSelector: '.item-detail .table-wrapper tr',
+    releaseDateSelector: '.item-metas-wrap .product-info__release-date',
     fieldPanelSelector: '.item-metas-wrap .item-meta3',
     favoriteActionSelector: '.item-metas-wrap .fav-button',
     favoriteGroupSelector: '.item-metas-wrap .item-favorite',
@@ -137,13 +139,27 @@
 }
 
 .melon-archive-button--copy {
+  flex: 0 0 120px;
+  width: 120px;
+  height: 35px;
+  padding: 0 10px;
   color: var(--melon-archive-action-text);
   background: var(--melon-archive-copy-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .melon-archive-button--download {
+  flex: 0 0 180px;
+  width: 180px;
+  height: 35px;
+  padding: 0 10px;
   color: var(--melon-archive-action-text);
   background: var(--melon-archive-download-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .melon-archive-button:hover {
@@ -253,6 +269,31 @@
    */
   function hasBracketedContent(value) {
     return /【[^】]*】/u.test(String(value ?? ''));
+  }
+
+  /**
+   * 将页面详情中的日期统一为Melonbooks正在使用的日文显示格式。
+   * @param {unknown} value
+   * @returns {string}
+   */
+  function formatJapaneseDate(value) {
+    const normalized = normalizeSpaces(value);
+    const match = normalized.match(
+      /^(\d{4})\s*(?:年|[./-])\s*(\d{1,2})\s*(?:月|[./-])\s*(\d{1,2})\s*日?$/u
+    );
+    if (!match) return '';
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    const isValidDate =
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day;
+    if (!isValidDate) return '';
+
+    return `${year}年${String(month).padStart(2, '0')}月${String(day).padStart(2, '0')}日`;
   }
 
   /**
@@ -534,6 +575,27 @@
   }
 
   /**
+   * 将详情表格中的発行日显示在页面原有発売日的正上方。
+   * @param {typeof SITE_DEFINITION} site
+   * @param {Record<string, string>} info
+   * @returns {boolean}
+   */
+  function insertIssueDate(site, info) {
+    if (document.getElementById(ISSUE_DATE_ID)) return false;
+
+    const issueDateText = formatJapaneseDate(pickField(info, '発行日'));
+    const releaseDateElement = document.querySelector(site.releaseDateSelector);
+    if (!issueDateText || !releaseDateElement) return false;
+
+    const issueDateElement = document.createElement('span');
+    issueDateElement.id = ISSUE_DATE_ID;
+    issueDateElement.className = releaseDateElement.className;
+    issueDateElement.textContent = `発行日：${issueDateText}`;
+    releaseDateElement.before(issueDateElement);
+    return true;
+  }
+
+  /**
    * 将可能的相对图片地址转换为绝对URL。
    * @param {unknown} value
    * @returns {string|null}
@@ -787,6 +849,7 @@
       const copyButton = createButton('📋复制信息', 'copy');
       const downloadButton = createButton('📥复制并下载封面', 'download');
       const product = extractProduct(site);
+      insertIssueDate(site, product.info);
       let includeBracketedContent = true;
 
       const getCurrentOptions = () => ({ includeBracketedContent });
@@ -849,7 +912,7 @@
         includeBracketedCheckbox.type = 'checkbox';
         includeBracketedCheckbox.checked = true;
         const optionText = document.createElement('span');
-        optionText.textContent = '显示【】内容';
+        optionText.textContent = '表示【】内容';
         optionLabel.append(includeBracketedCheckbox, optionText);
 
         includeBracketedCheckbox.addEventListener('change', () => {
@@ -893,10 +956,12 @@
       buildTitle,
       buildTitleParts,
       formatFieldButtonText,
+      formatJapaneseDate,
       formatUnavailableFieldButtonText,
       getSiteDefinition,
       hasBracketedContent,
       inferImageExtension,
+      insertIssueDate,
       moveFavoriteActions,
       normalizeEventName,
       normalizeSpaces,
