@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      1.8.0
-// @description  在Melonbooks商品页生成规范标题，并复制标题或下载封面。
+// @version      2.0.0
+// @description  在Melonbooks同人商品页生成规范标题、归档图片并管理私人购买记录。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
 // @supportURL   https://github.com/uyuni-saline/melon-archive/issues
@@ -31,8 +31,14 @@
   const FIELD_PANEL_ID = 'melon-archive-fields';
   const ISSUE_DATE_ID = 'melon-archive-issue-date';
   const SETTINGS_MODAL_ID = 'melon-archive-settings-host';
+  const PURCHASE_MODAL_ID = 'melon-archive-purchase-host';
   const SETTINGS_STORAGE_KEY = 'settings';
-  const SETTINGS_SCHEMA_VERSION = 1;
+  const SETTINGS_SCHEMA_VERSION = 2;
+  const ARCHIVE_SCHEMA_VERSION = 1;
+  const DATABASE_NAME = 'melon-archive';
+  const DATABASE_VERSION = 1;
+  const DIRECTORY_HANDLE_KEY = 'archive-directory';
+  const NOW_PRINTING_PATTERN = /(?:now[_-]?printing|image=(?:&|$))/iu;
   const AUTHOR_PLACEHOLDER = true;
   const ELEMENT_WAIT_TIMEOUT_MS = 12_000;
   const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -48,6 +54,9 @@
     includeCircle: true,
     includeAuthor: true,
     includeGenre: true,
+    enablePurchaseRecords: true,
+    imageBackend: 'browser',
+    imageScope: 'thumbnail',
   });
 
   const SETTINGS_BOOLEAN_KEYS = Object.freeze([
@@ -60,7 +69,13 @@
     'includeCircle',
     'includeAuthor',
     'includeGenre',
+    'enablePurchaseRecords',
   ]);
+
+  const SETTINGS_ENUMS = Object.freeze({
+    imageBackend: Object.freeze(['browser', 'directory']),
+    imageScope: Object.freeze(['thumbnail', 'cover', 'all']),
+  });
 
   const SITE_DEFINITION = Object.freeze({
     hostnames: ['www.melonbooks.co.jp'],
@@ -77,12 +92,15 @@
     deliveryGroupSelector: '.item-metas-wrap .accordion-group',
     copyButtonColor: '#56C0CA',
     downloadButtonColor: '#F6BD57',
+    purchaseButtonColor: '#77B785',
     actionTextColor: '#1f1f1f',
     fieldButtonColor: '#EDEADA',
     fieldButtonTextColor: '#00A667',
     unavailableFieldButtonColor: '#F4F3EF',
     unavailableFieldButtonTextColor: '#8A8A8A',
     coverSelectors: ['.main_image img', '.item-main img'],
+    gallerySelectors: ['.slider.my-gallery img', '.main_image img', '.item-main img'],
+    bonusImageSelectors: ['.item-detail.item-priv img'],
   });
 
   const FIELD_COPY_BUTTONS = Object.freeze([
@@ -122,6 +140,7 @@
 #${UI_ID} {
   --melon-archive-copy-color: #56C0CA;
   --melon-archive-download-color: #F6BD57;
+  --melon-archive-purchase-color: #77B785;
   --melon-archive-action-text: #1f1f1f;
   display: block;
   margin: 4px 0 8px;
@@ -179,6 +198,11 @@
 .melon-archive-button--download {
   color: var(--melon-archive-action-text);
   background: var(--melon-archive-download-color);
+}
+
+.melon-archive-button--purchase {
+  color: var(--melon-archive-action-text);
+  background: var(--melon-archive-purchase-color);
 }
 
 .melon-archive-button:hover {
@@ -349,6 +373,89 @@
   padding: 18px;
 }
 
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field > span {
+  font-weight: 600;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #cfcfcf;
+  border-radius: 4px;
+  padding: 7px 9px;
+  color: #222;
+  background: #fff;
+  font: inherit;
+}
+
+.field textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.summary {
+  margin: 0;
+  border-radius: 5px;
+  padding: 10px 12px;
+  background: #f5f5f5;
+  overflow-wrap: anywhere;
+}
+
+.record-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.record-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e1e1e1;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.record-row button,
+.inline-actions button {
+  appearance: none;
+  border: 1px solid #cfcfcf;
+  border-radius: 4px;
+  padding: 5px 9px;
+  color: #333;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status {
+  margin: 0;
+  color: #555;
+  font-size: 12px;
+}
+
+.danger {
+  color: #a12622 !important;
+}
+
 fieldset {
   display: grid;
   gap: 10px;
@@ -445,6 +552,10 @@ legend {
       settings[key] = typeof source[key] === 'boolean' ? source[key] : DEFAULT_SETTINGS[key];
     }
 
+    for (const [key, allowedValues] of Object.entries(SETTINGS_ENUMS)) {
+      settings[key] = allowedValues.includes(source[key]) ? source[key] : DEFAULT_SETTINGS[key];
+    }
+
     return settings;
   }
 
@@ -462,9 +573,9 @@ legend {
    */
   function saveSettings(value) {
     const settings = normalizeSettings(value);
-    const usesDefaults = SETTINGS_BOOLEAN_KEYS.every(
-      (key) => settings[key] === DEFAULT_SETTINGS[key]
-    );
+    const usesDefaults =
+      SETTINGS_BOOLEAN_KEYS.every((key) => settings[key] === DEFAULT_SETTINGS[key]) &&
+      Object.keys(SETTINGS_ENUMS).every((key) => settings[key] === DEFAULT_SETTINGS[key]);
 
     if (usesDefaults) GM_deleteValue(SETTINGS_STORAGE_KEY);
     else GM_setValue(SETTINGS_STORAGE_KEY, settings);
@@ -530,6 +641,178 @@ legend {
    */
   function uniqueNonEmpty(values) {
     return [...new Set(values.map(normalizeSpaces).filter(Boolean))];
+  }
+
+  /**
+   * 接受YYYY、YYYY-MM或YYYY-MM-DD，并保留用户实际记得的日期精度。
+   * @param {unknown} value
+   * @returns {{value: string, precision: 'year'|'month'|'day'}|null}
+   */
+  function normalizePurchaseDate(value) {
+    const normalized = normalizeSpaces(value).replace(/[./]/gu, '-');
+    if (!normalized) return null;
+
+    const match = normalized.match(/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$/u);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = match[2] ? Number(match[2]) : null;
+    const day = match[3] ? Number(match[3]) : null;
+    if (year < 1900 || year > 2200) return null;
+    if (month === null) return { value: String(year), precision: 'year' };
+    if (month < 1 || month > 12) return null;
+    const monthValue = `${year}-${String(month).padStart(2, '0')}`;
+    if (day === null) return { value: monthValue, precision: 'month' };
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return { value: `${monthValue}-${String(day).padStart(2, '0')}`, precision: 'day' };
+  }
+
+  /**
+   * 将标题上方标签分为分类和销售状态，同时保留原始顺序。
+   * @param {string[]} labels
+   */
+  function classifyHeaderLabels(labels) {
+    const headerLabels = uniqueNonEmpty(labels);
+    const productCategory = headerLabels[0] ?? null;
+    const marketCategory = headerLabels.find((label) => label === '同人') ?? null;
+    const ageLabel =
+      headerLabels.find((label) => /^(?:一般|成人|R18|全年齢)$/iu.test(label)) ?? null;
+    const classificationValues = new Set(
+      [productCategory, marketCategory, ageLabel].filter(Boolean)
+    );
+    return {
+      headerLabels,
+      productCategory,
+      marketCategory,
+      ageLabel,
+      salesBadges: headerLabels.filter((label) => !classificationValues.has(label)),
+    };
+  }
+
+  /**
+   * 导入时保留更新较新的商品快照，并按ID合并购买批次。
+   * @param {Record<string, any>|null} localRecord
+   * @param {Record<string, any>} incomingRecord
+   * @returns {Record<string, any>}
+   */
+  function mergeProductRecords(localRecord, incomingRecord) {
+    if (!localRecord) return structuredClone(incomingRecord);
+    const localTime = Date.parse(localRecord.updatedAt || localRecord.recordedAt || 0) || 0;
+    const incomingTime = Date.parse(incomingRecord.updatedAt || incomingRecord.recordedAt || 0) || 0;
+    const newer = incomingTime > localTime ? incomingRecord : localRecord;
+    const older = newer === incomingRecord ? localRecord : incomingRecord;
+    const acquisitionMap = new Map();
+    for (const acquisition of [...(older.acquisitions ?? []), ...(newer.acquisitions ?? [])]) {
+      if (acquisition?.id) acquisitionMap.set(acquisition.id, acquisition);
+    }
+
+    return {
+      ...structuredClone(older),
+      ...structuredClone(newer),
+      acquisitions: [...acquisitionMap.values()],
+      officialTags: uniqueNonEmpty([
+        ...(older.officialTags ?? []),
+        ...(newer.officialTags ?? []),
+      ]),
+      userTags: uniqueNonEmpty([...(older.userTags ?? []), ...(newer.userTags ?? [])]),
+      images: newer.images?.length ? structuredClone(newer.images) : structuredClone(older.images ?? []),
+    };
+  }
+
+  function requestToPromise(request) {
+    return new Promise((resolve, reject) => {
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+  }
+
+  function transactionToPromise(transaction) {
+    return new Promise((resolve, reject) => {
+      transaction.addEventListener('complete', resolve, { once: true });
+      transaction.addEventListener('abort', () => reject(transaction.error), { once: true });
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+    });
+  }
+
+  function openArchiveDatabase() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+      request.addEventListener('upgradeneeded', () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains('products')) {
+          database.createObjectStore('products', { keyPath: 'key' });
+        }
+        if (!database.objectStoreNames.contains('images')) {
+          database.createObjectStore('images', { keyPath: 'hash' });
+        }
+        if (!database.objectStoreNames.contains('handles')) {
+          database.createObjectStore('handles');
+        }
+      });
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+      request.addEventListener('blocked', () => reject(new Error('数据库升级被其他页面阻止。')), {
+        once: true,
+      });
+    });
+  }
+
+  async function databaseGet(storeName, key) {
+    const database = await openArchiveDatabase();
+    try {
+      return await requestToPromise(database.transaction(storeName).objectStore(storeName).get(key));
+    } finally {
+      database.close();
+    }
+  }
+
+  async function databasePut(storeName, value, key) {
+    const database = await openArchiveDatabase();
+    try {
+      const transaction = database.transaction(storeName, 'readwrite');
+      const store = transaction.objectStore(storeName);
+      if (key === undefined) store.put(value);
+      else store.put(value, key);
+      await transactionToPromise(transaction);
+    } finally {
+      database.close();
+    }
+  }
+
+  async function databaseDelete(storeName, key) {
+    const database = await openArchiveDatabase();
+    try {
+      const transaction = database.transaction(storeName, 'readwrite');
+      transaction.objectStore(storeName).delete(key);
+      await transactionToPromise(transaction);
+    } finally {
+      database.close();
+    }
+  }
+
+  async function databaseGetAll(storeName) {
+    const database = await openArchiveDatabase();
+    try {
+      return await requestToPromise(database.transaction(storeName).objectStore(storeName).getAll());
+    } finally {
+      database.close();
+    }
+  }
+
+  async function databaseCount(storeName) {
+    const database = await openArchiveDatabase();
+    try {
+      return await requestToPromise(database.transaction(storeName).objectStore(storeName).count());
+    } finally {
+      database.close();
+    }
   }
 
   /**
@@ -809,6 +1092,175 @@ legend {
     return { rawTitle, info };
   }
 
+  function getProductIdentity() {
+    const canonicalValue = document.querySelector('link[rel="canonical"]')?.getAttribute('href');
+    const canonicalUrl = toAbsoluteUrl(canonicalValue) ?? window.location.href;
+    const url = new URL(canonicalUrl);
+    const productId = url.searchParams.get('product_id') ?? '';
+    return {
+      source: 'melonbooks',
+      productId,
+      key: `melonbooks:${productId}`,
+      canonicalUrl: `${url.origin}${url.pathname}?product_id=${encodeURIComponent(productId)}`,
+    };
+  }
+
+  function extractHeaderClassifications() {
+    const labels = [...document.querySelectorAll('.item-header > .item-notes')].map(
+      (element) => element.innerText || element.textContent || ''
+    );
+    return classifyHeaderLabels(labels);
+  }
+
+  function extractOfficialTags() {
+    const groups = [...document.querySelectorAll('p.mt6')]
+      .map((container) =>
+        uniqueNonEmpty(
+          [...container.querySelectorAll('a')]
+            .map((element) => normalizeSpaces(element.innerText || element.textContent || ''))
+            .filter((text) => text.startsWith('#'))
+            .map((text) => text.replace(/^#+/u, ''))
+        )
+      )
+      .filter((tags) => tags.length);
+    groups.sort((left, right) => right.length - left.length);
+    return groups[0] ?? [];
+  }
+
+  function extractDetailSectionText(title) {
+    const heading = [...document.querySelectorAll('.item-detail h3')].find(
+      (element) => normalizeSpaces(element.textContent) === title
+    );
+    const section = heading?.closest('.item-detail');
+    if (!section) return null;
+    const clone = section.cloneNode(true);
+    for (const element of clone.querySelectorAll('h3, script, style')) element.remove();
+    for (const breakElement of clone.querySelectorAll('br')) {
+      breakElement.replaceWith(document.createTextNode('\n'));
+    }
+    const lines = (clone.innerText || clone.textContent || '')
+      .split(/\r?\n/u)
+      .map(normalizeSpaces)
+      .filter(Boolean);
+    return lines.length ? lines.join('\n') : null;
+  }
+
+  function normalizeIsoDate(value) {
+    const formatted = formatJapaneseDate(value);
+    const match = formatted.match(/^(\d{4})年(\d{2})月(\d{2})日$/u);
+    return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+  }
+
+  function extractReleaseDate(site) {
+    const text = normalizeSpaces(document.querySelector(site.releaseDateSelector)?.textContent);
+    return normalizeIsoDate(text.replace(/^発売日\s*[:：]\s*/u, ''));
+  }
+
+  function extractTitleQualifiers(rawTitle) {
+    return uniqueNonEmpty([...String(rawTitle ?? '').matchAll(/【([^】]*)】/gu)].map((match) => match[1]));
+  }
+
+  function getArchivableImageUrl(image) {
+    if (!image) return null;
+    const sourceUrl = getImageUrl(image);
+    const deferredUrl = toAbsoluteUrl(
+      image.dataset.src || image.dataset.original || image.getAttribute('data-lazy')
+    );
+    if (sourceUrl && !NOW_PRINTING_PATTERN.test(sourceUrl)) return sourceUrl;
+    return deferredUrl || sourceUrl;
+  }
+
+  function collectProductImages(site) {
+    const images = [];
+    const seen = new Set();
+    const append = (url, role, order) => {
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      images.push({
+        sourceUrl: url,
+        role,
+        order,
+        isPlaceholder: NOW_PRINTING_PATTERN.test(url),
+        storageStatus: 'remote',
+        hash: null,
+      });
+    };
+
+    const coverElement = site.coverSelectors
+      .map((selector) => document.querySelector(selector))
+      .find(Boolean);
+    const galleryRoot =
+      coverElement?.closest('.slider.my-gallery') ||
+      coverElement?.closest('.main_image') ||
+      coverElement?.closest('.item-main');
+    const galleryElements = galleryRoot
+      ? [...galleryRoot.querySelectorAll('img')]
+      : uniqueNonEmpty(site.gallerySelectors).flatMap((selector) => [
+          ...document.querySelectorAll(selector),
+        ]);
+    let galleryOrder = 0;
+    for (const image of galleryElements) {
+      append(getArchivableImageUrl(image), galleryOrder === 0 ? 'cover' : 'preview', galleryOrder);
+      galleryOrder += 1;
+    }
+
+    let bonusOrder = 0;
+    for (const selector of site.bonusImageSelectors) {
+      for (const image of document.querySelectorAll(selector)) {
+        append(getArchivableImageUrl(image), 'bonus', bonusOrder);
+        bonusOrder += 1;
+      }
+    }
+    return images;
+  }
+
+  function buildArchiveProduct(site, product, composedTitle) {
+    const identity = getProductIdentity();
+    const parts = buildTitleParts(product, { includeBracketedContent: true });
+    const classifications = extractHeaderClassifications();
+    const now = new Date().toISOString();
+    return {
+      schemaVersion: ARCHIVE_SCHEMA_VERSION,
+      productType: 'doujin',
+      ...identity,
+      originalTitle: product.rawTitle || null,
+      composedTitle: normalizeSpaces(composedTitle),
+      titleParts: {
+        ...parts,
+        eventFull: pickField(product.info, 'イベント', '初出イベント') || null,
+        titleQualifiers: extractTitleQualifiers(product.rawTitle),
+      },
+      classifications: {
+        ...classifications,
+        detailAudience: pickField(product.info, '作品種別') || null,
+      },
+      officialTags: extractOfficialTags(),
+      details: {
+        releaseDate: extractReleaseDate(site),
+        publicationDate: normalizeIsoDate(pickField(product.info, '発行日')),
+        listedPrice: Number(extractNumericPrice(document.querySelector(site.priceSelector)?.textContent)) || null,
+        currency: 'JPY',
+        format: pickField(product.info, '版型・メディア') || null,
+        pageCount: Number(pickField(product.info, '総ページ数・CG数・曲数')) || null,
+        audience: pickField(product.info, '作品種別') || null,
+        rawFields: { ...product.info },
+      },
+      descriptions: {
+        bonusInformation: extractDetailSectionText('特典情報'),
+        circleComment: extractDetailSectionText('サークル(先生)からのコメント/作品詳細'),
+        staffRecommendation: extractDetailSectionText('スタッフのオススメポイント'),
+      },
+      images: collectProductImages(site),
+      acquisitions: [],
+      note: '',
+      userTags: [],
+      recordedAt: now,
+      capturedAt: now,
+      updatedAt: now,
+      extractionWarnings: [],
+    };
+  }
+
   /**
    * 将详情表格中的発行日显示在页面原有発売日的正上方。
    * @param {typeof SITE_DEFINITION} site
@@ -940,6 +1392,190 @@ legend {
     });
   }
 
+  async function hashBlob(blob) {
+    const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  async function readImageDimensions(blob) {
+    if (typeof createImageBitmap !== 'function') return { width: null, height: null };
+    const bitmap = await createImageBitmap(blob);
+    try {
+      return { width: bitmap.width, height: bitmap.height };
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  async function createThumbnail(blob, maxWidth = 320) {
+    if (typeof createImageBitmap !== 'function') return blob;
+    const bitmap = await createImageBitmap(blob);
+    try {
+      if (bitmap.width <= maxWidth) return blob;
+      const ratio = maxWidth / bitmap.width;
+      const canvas = document.createElement('canvas');
+      canvas.width = maxWidth;
+      canvas.height = Math.max(1, Math.round(bitmap.height * ratio));
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) return blob;
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      return await new Promise((resolve) => {
+        canvas.toBlob((thumbnail) => resolve(thumbnail || blob), 'image/webp', 0.82);
+      });
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  function selectImagesForScope(images, scope) {
+    if (scope === 'all') return images;
+    const cover = images.find((image) => image.role === 'cover');
+    return cover ? [cover] : [];
+  }
+
+  async function getArchiveDirectoryHandle() {
+    return (await databaseGet('handles', DIRECTORY_HANDLE_KEY)) ?? null;
+  }
+
+  async function ensureDirectoryPermission(handle) {
+    if (!handle) return false;
+    const options = { mode: 'readwrite' };
+    if ((await handle.queryPermission?.(options)) === 'granted') return true;
+    return (await handle.requestPermission?.(options)) === 'granted';
+  }
+
+  async function selectArchiveDirectory() {
+    if (typeof window.showDirectoryPicker !== 'function') {
+      throw new Error('当前浏览器不支持选择本地归档目录。请使用最新版Chrome或Edge。');
+    }
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await databasePut('handles', handle, DIRECTORY_HANDLE_KEY);
+    return handle;
+  }
+
+  async function writeBlobToDirectory(rootHandle, blob, hash, extension) {
+    const imageDirectory = await rootHandle.getDirectoryHandle('images', { create: true });
+    const filename = `${hash}.${extension}`;
+    try {
+      await imageDirectory.getFileHandle(filename);
+      return `images/${filename}`;
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') throw error;
+    }
+    const fileHandle = await imageDirectory.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return `images/${filename}`;
+  }
+
+  async function writeProductMetadataToDirectory(rootHandle, productRecord) {
+    const productDirectory = await rootHandle.getDirectoryHandle('products', { create: true });
+    const fileHandle = await productDirectory.getFileHandle(`${productRecord.productId}.json`, {
+      create: true,
+    });
+    const writable = await fileHandle.createWritable();
+    await writable.write(
+      new Blob([JSON.stringify(productRecord, null, 2)], { type: 'application/json' })
+    );
+    await writable.close();
+  }
+
+  async function archiveProductImages(productRecord, settings) {
+    const selected = selectImagesForScope(productRecord.images ?? [], settings.imageScope);
+    let directoryHandle = null;
+    if (settings.imageBackend === 'directory') {
+      directoryHandle = await getArchiveDirectoryHandle();
+      if (!(await ensureDirectoryPermission(directoryHandle))) {
+        throw new Error('尚未授权本地图片归档目录，请先在设置中选择目录。');
+      }
+    }
+    if (!selected.length) {
+      if (directoryHandle) await writeProductMetadataToDirectory(directoryHandle, productRecord);
+      return productRecord;
+    }
+
+    const selectedUrls = new Set(selected.map((image) => image.sourceUrl));
+    const updatedImages = [];
+    for (const image of productRecord.images ?? []) {
+      if (!selectedUrls.has(image.sourceUrl)) {
+        updatedImages.push(image);
+        continue;
+      }
+
+      const desiredVariant =
+        settings.imageScope === 'thumbnail' && image.role === 'cover' ? 'thumbnail' : 'full';
+      const hasSuitableStoredCopy =
+        image.storageStatus === 'stored' &&
+        image.storageBackend === settings.imageBackend &&
+        (image.storedVariant === desiredVariant ||
+          (desiredVariant === 'thumbnail' && image.storedVariant === 'full'));
+      if (hasSuitableStoredCopy) {
+        updatedImages.push(image);
+        continue;
+      }
+
+      try {
+        const downloadedBlob = await downloadBlob(image.sourceUrl);
+        const storedBlob =
+          settings.imageScope === 'thumbnail' && image.role === 'cover'
+            ? await createThumbnail(downloadedBlob)
+            : downloadedBlob;
+        const hash = await hashBlob(storedBlob);
+        const dimensions = await readImageDimensions(storedBlob).catch(() => ({
+          width: null,
+          height: null,
+        }));
+        const extension = inferImageExtension(storedBlob.type, image.sourceUrl);
+        let localPath = null;
+
+        if (settings.imageBackend === 'browser') {
+          await databasePut('images', {
+            hash,
+            blob: storedBlob,
+            mimeType: storedBlob.type || 'application/octet-stream',
+            byteSize: storedBlob.size,
+            ...dimensions,
+            isPlaceholder: image.isPlaceholder,
+            recordedAt: new Date().toISOString(),
+          });
+        } else {
+          localPath = await writeBlobToDirectory(directoryHandle, storedBlob, hash, extension);
+        }
+
+        updatedImages.push({
+          ...image,
+          hash,
+          mimeType: storedBlob.type || null,
+          byteSize: storedBlob.size,
+          ...dimensions,
+          localPath,
+          storageBackend: settings.imageBackend,
+          storageStatus: 'stored',
+          storedVariant: desiredVariant,
+        });
+      } catch (error) {
+        console.warn(`[${SCRIPT_LABEL}] Image archive failed.`, error);
+        updatedImages.push({
+          ...image,
+          storageBackend: settings.imageBackend,
+          storageStatus: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const updatedRecord = {
+      ...productRecord,
+      images: updatedImages,
+      updatedAt: new Date().toISOString(),
+    };
+    if (directoryHandle) await writeProductMetadataToDirectory(directoryHandle, updatedRecord);
+    return updatedRecord;
+  }
+
   /**
    * 根据MIME类型或URL后缀判断图片扩展名。
    * @param {string} mimeType
@@ -1000,6 +1636,304 @@ legend {
     button.textContent = text;
     button.classList.remove('is-busy');
     button.classList.add('is-done');
+  }
+
+  function createRecordId() {
+    return typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function getOwnedQuantity(productRecord) {
+    return (productRecord?.acquisitions ?? []).reduce(
+      (total, acquisition) => total + Math.max(0, Number(acquisition.quantity) || 0),
+      0
+    );
+  }
+
+  function updatePurchaseButton(button, productRecord) {
+    const quantity = getOwnedQuantity(productRecord);
+    button.textContent = quantity > 1 ? `✅已购买 ×${quantity}` : quantity === 1 ? '✅已购买' : '🛍️标记已购买';
+    button.title = quantity ? `持有数量：${quantity}；点击管理购买记录` : '标记为已购买';
+    button.classList.toggle('is-done', quantity > 0);
+  }
+
+  function parseUserTags(value) {
+    return uniqueNonEmpty(String(value ?? '').split(/[,，、\n]/u));
+  }
+
+  function mergeImageReferences(existingImages, freshImages) {
+    const existingByUrl = new Map(
+      (existingImages ?? []).filter((image) => image?.sourceUrl).map((image) => [image.sourceUrl, image])
+    );
+    const merged = (freshImages ?? []).map((image) => ({
+      ...image,
+      ...(existingByUrl.get(image.sourceUrl) ?? {}),
+      role: image.role,
+      order: image.order,
+    }));
+    const freshUrls = new Set(merged.map((image) => image.sourceUrl));
+    return [...merged, ...(existingImages ?? []).filter((image) => !freshUrls.has(image.sourceUrl))];
+  }
+
+  async function savePurchaseProduct(site, product, composedTitle, existingRecord, form, addBatch) {
+    const freshRecord = buildArchiveProduct(site, product, composedTitle);
+    const record = existingRecord
+      ? {
+          ...freshRecord,
+          acquisitions: [...(existingRecord.acquisitions ?? [])],
+          note: existingRecord.note ?? '',
+          userTags: [...(existingRecord.userTags ?? [])],
+          images: mergeImageReferences(existingRecord.images, freshRecord.images),
+          recordedAt: existingRecord.recordedAt ?? freshRecord.recordedAt,
+        }
+      : freshRecord;
+
+    record.note = form.elements.note.value.trim();
+    record.userTags = parseUserTags(form.elements.userTags.value);
+    if (addBatch) {
+      const quantity = Number(form.elements.quantity.value);
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
+        throw new Error('购买数量必须是1至999之间的整数。');
+      }
+      const dateInput = normalizeSpaces(form.elements.purchaseDate.value);
+      const purchasedOn = normalizePurchaseDate(dateInput);
+      if (dateInput && !purchasedOn) {
+        throw new Error('购买日期请使用YYYY、YYYY-MM或YYYY-MM-DD格式。');
+      }
+      record.acquisitions.push({
+        id: createRecordId(),
+        quantity,
+        purchasedOn,
+        recordedAt: new Date().toISOString(),
+      });
+    }
+    record.updatedAt = new Date().toISOString();
+    await databasePut('products', record);
+    return record;
+  }
+
+  async function removeAcquisition(productRecord, acquisitionId) {
+    const updated = {
+      ...productRecord,
+      acquisitions: (productRecord.acquisitions ?? []).filter(
+        (acquisition) => acquisition.id !== acquisitionId
+      ),
+      updatedAt: new Date().toISOString(),
+    };
+    await databasePut('products', updated);
+    return updated;
+  }
+
+  function formatAcquisition(acquisition) {
+    const date = acquisition.purchasedOn?.value || '购买日期未知';
+    const recorded = new Date(acquisition.recordedAt).toLocaleDateString('zh-CN');
+    return `${date} · 数量${acquisition.quantity} · 入库${recorded}`;
+  }
+
+  async function openPurchaseDialog(site, product, getTitle, purchaseButton, settings) {
+    if (document.getElementById(PURCHASE_MODAL_ID)) return false;
+    let currentRecord = (await databaseGet('products', getProductIdentity().key)) ?? null;
+    const previousFocus = document.activeElement;
+    const host = document.createElement('div');
+    host.id = PURCHASE_MODAL_ID;
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>${SETTINGS_STYLES}</style>
+      <div class="backdrop">
+        <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="melon-archive-purchase-title">
+          <header class="header">
+            <h2 id="melon-archive-purchase-title">🛍️ 购买记录</h2>
+            <button class="close" type="button" data-action="close" aria-label="关闭">×</button>
+          </header>
+          <form>
+            <div class="body">
+              <p class="summary" data-role="title"></p>
+              <fieldset data-role="existing-fieldset">
+                <legend>已保存的购买批次</legend>
+                <ul class="record-list" data-role="record-list"></ul>
+                <p class="hint">持有数量由所有购买批次的数量合计得出。</p>
+              </fieldset>
+              <fieldset>
+                <legend data-role="batch-legend">购买信息</legend>
+                <label class="field"><span>实际购买日期（可留空）</span><input name="purchaseDate" type="text" inputmode="numeric" placeholder="YYYY、YYYY-MM或YYYY-MM-DD"></label>
+                <label class="field"><span>购买数量</span><input name="quantity" type="number" min="1" max="999" step="1" value="1" required></label>
+                <p class="hint">入库时间由脚本自动记录，与实际购买日期分别保存。</p>
+              </fieldset>
+              <fieldset>
+                <legend>个人整理</legend>
+                <label class="field"><span>用户备注</span><textarea name="note"></textarea></label>
+                <label class="field"><span>自定义标签</span><input name="userTags" type="text" placeholder="使用逗号分隔"></label>
+              </fieldset>
+              <p class="status" data-role="status"></p>
+            </div>
+            <footer class="actions">
+              <button type="button" data-action="close">取消</button>
+              <button type="submit" data-submit="metadata">仅保存备注与标签</button>
+              <button class="save" type="submit" data-submit="batch">保存购买批次</button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    `;
+
+    const form = shadow.querySelector('form');
+    const backdrop = shadow.querySelector('.backdrop');
+    const recordList = shadow.querySelector('[data-role="record-list"]');
+    const existingFieldset = shadow.querySelector('[data-role="existing-fieldset"]');
+    const metadataButton = shadow.querySelector('[data-submit="metadata"]');
+    const status = shadow.querySelector('[data-role="status"]');
+    shadow.querySelector('[data-role="title"]').textContent = getTitle();
+    form.elements.note.value = currentRecord?.note ?? '';
+    form.elements.userTags.value = (currentRecord?.userTags ?? []).join('、');
+
+    const close = () => {
+      host.remove();
+      previousFocus?.focus?.();
+    };
+    const renderAcquisitions = () => {
+      recordList.replaceChildren();
+      const acquisitions = currentRecord?.acquisitions ?? [];
+      existingFieldset.hidden = acquisitions.length === 0;
+      metadataButton.hidden = !currentRecord;
+      for (const acquisition of acquisitions) {
+        const item = document.createElement('li');
+        item.className = 'record-row';
+        const text = document.createElement('span');
+        text.textContent = formatAcquisition(acquisition);
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'danger';
+        removeButton.textContent = '删除';
+        removeButton.addEventListener('click', async () => {
+          if (!window.confirm('删除这个购买批次？商品资料和图片不会被删除。')) return;
+          currentRecord = await removeAcquisition(currentRecord, acquisition.id);
+          updatePurchaseButton(purchaseButton, currentRecord);
+          renderAcquisitions();
+        });
+        item.append(text, removeButton);
+        recordList.append(item);
+      }
+    };
+    renderAcquisitions();
+
+    for (const button of shadow.querySelectorAll('[data-action="close"]')) {
+      button.addEventListener('click', close);
+    }
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+    host.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submitter = event.submitter;
+      const addBatch = submitter?.dataset.submit === 'batch';
+      for (const button of form.querySelectorAll('button')) button.disabled = true;
+      status.textContent = '正在保存购买记录…';
+      try {
+        currentRecord = await savePurchaseProduct(
+          site,
+          product,
+          getTitle(),
+          currentRecord,
+          form,
+          addBatch
+        );
+        updatePurchaseButton(purchaseButton, currentRecord);
+        close();
+        purchaseButton.disabled = true;
+        purchaseButton.classList.add('is-busy');
+        purchaseButton.textContent = '⏳归档图片…';
+        try {
+          currentRecord = await archiveProductImages(currentRecord, settings);
+          await databasePut('products', currentRecord);
+          notify('购买记录和图片归档已保存。');
+        } catch (archiveError) {
+          console.warn(`[${SCRIPT_LABEL}] Purchase saved without image archive.`, archiveError);
+          notify(
+            `购买记录已保存，但图片归档失败：${
+              archiveError instanceof Error ? archiveError.message : String(archiveError)
+            }`
+          );
+        } finally {
+          updatePurchaseButton(purchaseButton, currentRecord);
+          purchaseButton.disabled = false;
+          purchaseButton.classList.remove('is-busy');
+        }
+      } catch (error) {
+        console.error(`[${SCRIPT_LABEL}] Purchase record failed.`, error);
+        status.textContent = error instanceof Error ? error.message : String(error);
+        for (const button of form.querySelectorAll('button')) button.disabled = false;
+      }
+    });
+
+    document.documentElement.append(host);
+    form.elements.purchaseDate.focus();
+    return true;
+  }
+
+  async function exportArchiveMetadata() {
+    const products = await databaseGetAll('products');
+    const backup = {
+      application: SCRIPT_LABEL,
+      schemaVersion: ARCHIVE_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      includesImageData: false,
+      products,
+    };
+    const date = new Date().toISOString().slice(0, 10);
+    saveBlob(
+      new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }),
+      `melon-archive-records-${date}.json`
+    );
+    return products.length;
+  }
+
+  async function importArchiveMetadata(file) {
+    const backup = JSON.parse(await file.text());
+    if (
+      !backup ||
+      backup.application !== SCRIPT_LABEL ||
+      backup.schemaVersion !== ARCHIVE_SCHEMA_VERSION ||
+      !Array.isArray(backup.products)
+    ) {
+      throw new Error('这不是受支持的Melon Archive备份文件。');
+    }
+    let imported = 0;
+    for (const incoming of backup.products) {
+      if (!incoming?.key || !incoming.productId || !Array.isArray(incoming.acquisitions)) continue;
+      const local = await databaseGet('products', incoming.key);
+      await databasePut('products', mergeProductRecords(local, incoming));
+      imported += 1;
+    }
+    return imported;
+  }
+
+  async function summarizeArchive() {
+    const products = await databaseGetAll('products');
+    const images = await databaseGetAll('images');
+    return {
+      productCount: products.filter((product) => getOwnedQuantity(product) > 0).length,
+      ownedQuantity: products.reduce((sum, product) => sum + getOwnedQuantity(product), 0),
+      imageCount: images.length,
+      imageBytes: images.reduce((sum, image) => sum + (Number(image.byteSize) || 0), 0),
+    };
+  }
+
+  function formatBytes(value) {
+    const bytes = Math.max(0, Number(value) || 0);
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+    let amount = bytes;
+    let unit = units[0];
+    for (const nextUnit of units) {
+      amount /= 1024;
+      unit = nextUnit;
+      if (amount < 1024) break;
+    }
+    return `${amount.toFixed(amount >= 100 ? 0 : amount >= 10 ? 1 : 2)} ${unit}`;
   }
 
   /**
@@ -1096,8 +2030,9 @@ legend {
    * @param {typeof DEFAULT_SETTINGS} settings
    */
   function writeSettingsForm(form, settings) {
-    for (const input of form.querySelectorAll('input[data-setting]')) {
-      input.checked = Boolean(settings[input.dataset.setting]);
+    for (const input of form.querySelectorAll('[data-setting]')) {
+      if (input.type === 'checkbox') input.checked = Boolean(settings[input.dataset.setting]);
+      else input.value = settings[input.dataset.setting];
     }
   }
 
@@ -1107,8 +2042,8 @@ legend {
    */
   function readSettingsForm(form) {
     const settings = { schemaVersion: SETTINGS_SCHEMA_VERSION };
-    for (const input of form.querySelectorAll('input[data-setting]')) {
-      settings[input.dataset.setting] = input.checked;
+    for (const input of form.querySelectorAll('[data-setting]')) {
+      settings[input.dataset.setting] = input.type === 'checkbox' ? input.checked : input.value;
     }
     return normalizeSettings(settings);
   }
@@ -1141,6 +2076,7 @@ legend {
                 <label class="option"><input type="checkbox" data-setting="showIssueDate">显示発行日</label>
                 <label class="option"><input type="checkbox" data-setting="moveFavoriteActions">移动收藏与愿望单按钮</label>
                 <label class="option"><input type="checkbox" data-setting="showFieldButtons">显示五个字段复制按钮</label>
+                <label class="option"><input type="checkbox" data-setting="enablePurchaseRecords">启用私人购买记录</label>
               </fieldset>
               <fieldset>
                 <legend>拼接标题格式</legend>
@@ -1149,6 +2085,34 @@ legend {
                 <label class="option"><input type="checkbox" data-setting="includeAuthor">包含作者</label>
                 <label class="option"><input type="checkbox" data-setting="includeGenre">包含分类</label>
                 <p class="hint">商品标题始终保留。设置保存后将刷新当前页面。</p>
+              </fieldset>
+              <fieldset>
+                <legend>购买记录图片</legend>
+                <label class="field"><span>图片保存后端</span><select data-setting="imageBackend">
+                  <option value="browser">浏览器数据库</option>
+                  <option value="directory">用户指定的本地目录</option>
+                </select></label>
+                <label class="field"><span>保存范围</span><select data-setting="imageScope">
+                  <option value="thumbnail">仅保存压缩封面缩略图（推荐）</option>
+                  <option value="cover">保存完整封面</option>
+                  <option value="all">保存封面、预览图和特典图</option>
+                </select></label>
+                <div class="inline-actions">
+                  <button type="button" data-action="directory">📁选择本地归档目录</button>
+                  <button type="button" data-action="persist">🛡️申请浏览器持久存储</button>
+                </div>
+                <p class="hint">本地目录功能需要Chrome或Edge。请只授权专用目录；图片按SHA-256去重。</p>
+                <p class="status" data-role="directory-status"></p>
+              </fieldset>
+              <fieldset>
+                <legend>数据库与备份</legend>
+                <p class="status" data-role="archive-status">正在读取数据库状态…</p>
+                <div class="inline-actions">
+                  <button type="button" data-action="export">⬇️导出记录JSON</button>
+                  <button type="button" data-action="import">⬆️合并导入JSON</button>
+                  <input type="file" accept="application/json,.json" data-role="import-file" hidden>
+                </div>
+                <p class="hint">JSON包含商品资料和购买记录，不包含浏览器数据库中的图片Blob。本地目录中的图片文件不会被修改。</p>
               </fieldset>
             </div>
             <footer class="actions">
@@ -1163,7 +2127,26 @@ legend {
 
     const form = shadow.querySelector('form');
     const backdrop = shadow.querySelector('.backdrop');
+    const archiveStatus = shadow.querySelector('[data-role="archive-status"]');
+    const directoryStatus = shadow.querySelector('[data-role="directory-status"]');
+    const importFile = shadow.querySelector('[data-role="import-file"]');
     writeSettingsForm(form, loadSettings());
+
+    const refreshArchiveStatus = async () => {
+      try {
+        const summary = await summarizeArchive();
+        archiveStatus.textContent = `已购买商品${summary.productCount}件，持有数量${summary.ownedQuantity}，浏览器图片${summary.imageCount}张（${formatBytes(summary.imageBytes)}）。`;
+        const handle = await getArchiveDirectoryHandle();
+        directoryStatus.textContent = handle
+          ? `已选择目录：${handle.name}（写入时可能需要重新授权）`
+          : '尚未选择本地归档目录。';
+      } catch (error) {
+        archiveStatus.textContent = `数据库状态读取失败：${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
+    };
+    void refreshArchiveStatus();
 
     const close = () => {
       host.remove();
@@ -1175,6 +2158,61 @@ legend {
     }
     shadow.querySelector('[data-action="reset"]').addEventListener('click', () => {
       writeSettingsForm(form, DEFAULT_SETTINGS);
+    });
+    shadow.querySelector('[data-action="directory"]').addEventListener('click', async () => {
+      directoryStatus.textContent = '正在选择目录…';
+      try {
+        const handle = await selectArchiveDirectory();
+        directoryStatus.textContent = `已选择目录：${handle.name}`;
+        form.querySelector('[data-setting="imageBackend"]').value = 'directory';
+      } catch (error) {
+        if (error?.name === 'AbortError') directoryStatus.textContent = '已取消选择目录。';
+        else directoryStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
+    });
+    shadow.querySelector('[data-action="persist"]').addEventListener('click', async () => {
+      if (!navigator.storage?.persist) {
+        directoryStatus.textContent = '当前浏览器不支持持久存储申请。';
+        return;
+      }
+      try {
+        const persisted = await navigator.storage.persist();
+        directoryStatus.textContent = persisted
+          ? '浏览器已允许持久保存站点数据库；用户主动清除数据时仍会删除。'
+          : '浏览器未批准持久存储申请，请继续定期导出备份。';
+      } catch (error) {
+        directoryStatus.textContent = `持久存储申请失败：${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
+    });
+    shadow.querySelector('[data-action="export"]').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const count = await exportArchiveMetadata();
+        archiveStatus.textContent = `已导出${count}条商品记录。`;
+      } catch (error) {
+        archiveStatus.textContent = `导出失败：${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    shadow.querySelector('[data-action="import"]').addEventListener('click', () => {
+      importFile.value = '';
+      importFile.click();
+    });
+    importFile.addEventListener('change', async () => {
+      const file = importFile.files?.[0];
+      if (!file) return;
+      archiveStatus.textContent = '正在合并导入记录…';
+      try {
+        const count = await importArchiveMetadata(file);
+        archiveStatus.textContent = `已合并导入${count}条商品记录。`;
+        await refreshArchiveStatus();
+      } catch (error) {
+        archiveStatus.textContent = `导入失败：${error instanceof Error ? error.message : String(error)}`;
+      }
     });
     backdrop.addEventListener('click', (event) => {
       if (event.target === backdrop) close();
@@ -1214,13 +2252,18 @@ legend {
       container.setAttribute('aria-label', '同人志归档操作');
       container.style.setProperty('--melon-archive-copy-color', site.copyButtonColor);
       container.style.setProperty('--melon-archive-download-color', site.downloadButtonColor);
+      container.style.setProperty('--melon-archive-purchase-color', site.purchaseButtonColor);
       container.style.setProperty('--melon-archive-action-text', site.actionTextColor);
 
       const buttonGroup = document.createElement('div');
       buttonGroup.className = 'melon-archive-buttons';
       const copyButton = createButton('📋复制信息', 'copy');
       const downloadButton = createButton('📥复制并下载封面', 'download');
+      const purchaseButton = createButton('🛍️标记已购买', 'purchase');
       const product = extractProduct(site);
+      const isDoujinProduct = extractHeaderClassifications().headerLabels.some((label) =>
+        label.includes('同人')
+      );
       if (settings.showIssueDate) insertIssueDate(site, product.info);
       if (settings.enablePriceCopy) enablePriceCopy(site);
       let includeBracketedContent = settings.includeBracketedContent;
@@ -1244,6 +2287,14 @@ legend {
       downloadButton.addEventListener('click', () =>
         void copyAndDownload(site, getCurrentTitle, downloadButton)
       );
+      purchaseButton.addEventListener('click', () => {
+        void openPurchaseDialog(site, product, getCurrentTitle, purchaseButton, settings).catch(
+          (error) => {
+            console.error(`[${SCRIPT_LABEL}] Purchase dialog failed.`, error);
+            notify(`购买记录无法打开：${error instanceof Error ? error.message : String(error)}`);
+          }
+        );
+      });
 
       const fieldPanelTarget = document.querySelector(site.fieldPanelSelector);
       const fieldPanel = document.createElement('div');
@@ -1284,6 +2335,17 @@ legend {
       };
 
       buttonGroup.append(copyButton, downloadButton);
+      if (settings.enablePurchaseRecords && isDoujinProduct) {
+        buttonGroup.append(purchaseButton);
+        try {
+          const storedProduct = await databaseGet('products', getProductIdentity().key);
+          updatePurchaseButton(purchaseButton, storedProduct);
+        } catch (error) {
+          console.warn(`[${SCRIPT_LABEL}] Purchase database is unavailable.`, error);
+          purchaseButton.disabled = true;
+          purchaseButton.textContent = '❌记录不可用';
+        }
+      }
 
       if (hasBracketedContent(product.rawTitle)) {
         const optionLabel = document.createElement('label');
@@ -1339,17 +2401,22 @@ legend {
     module.exports = {
       buildTitle,
       buildTitleParts,
+      classifyHeaderLabels,
       enablePriceCopy,
       extractNumericPrice,
+      formatBytes,
       formatFieldButtonText,
       formatJapaneseDate,
       formatUnavailableFieldButtonText,
+      getOwnedQuantity,
       getSiteDefinition,
       hasBracketedContent,
       inferImageExtension,
       insertIssueDate,
+      mergeProductRecords,
       moveFavoriteActions,
       normalizeEventName,
+      normalizePurchaseDate,
       normalizeSettings,
       normalizeSpaces,
       saveSettings,

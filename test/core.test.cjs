@@ -6,17 +6,21 @@ const assert = require('node:assert/strict');
 const {
   buildTitle,
   buildTitleParts,
+  classifyHeaderLabels,
   enablePriceCopy,
   extractNumericPrice,
   formatFieldButtonText,
   formatJapaneseDate,
   formatUnavailableFieldButtonText,
+  getOwnedQuantity,
   getSiteDefinition,
   hasBracketedContent,
   inferImageExtension,
   insertIssueDate,
+  mergeProductRecords,
   moveFavoriteActions,
   normalizeEventName,
+  normalizePurchaseDate,
   normalizeSettings,
   normalizeSpaces,
   saveSettings,
@@ -64,7 +68,7 @@ test('normalizeSettings validates known options and fills defaults', () => {
       unknownOption: true,
     }),
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       includeBracketedContent: false,
       enablePriceCopy: true,
       showIssueDate: true,
@@ -74,8 +78,71 @@ test('normalizeSettings validates known options and fills defaults', () => {
       includeCircle: true,
       includeAuthor: true,
       includeGenre: false,
+      enablePurchaseRecords: true,
+      imageBackend: 'browser',
+      imageScope: 'thumbnail',
     }
   );
+});
+
+test('normalizeSettings validates image backend options', () => {
+  assert.equal(normalizeSettings({ imageBackend: 'directory' }).imageBackend, 'directory');
+  assert.equal(normalizeSettings({ imageScope: 'all' }).imageScope, 'all');
+  assert.equal(normalizeSettings({ imageBackend: 'invalid' }).imageBackend, 'browser');
+});
+
+test('normalizePurchaseDate preserves known precision and rejects invalid dates', () => {
+  assert.deepEqual(normalizePurchaseDate('2024'), { value: '2024', precision: 'year' });
+  assert.deepEqual(normalizePurchaseDate('2024/8'), { value: '2024-08', precision: 'month' });
+  assert.deepEqual(normalizePurchaseDate('2024-08-17'), {
+    value: '2024-08-17',
+    precision: 'day',
+  });
+  assert.equal(normalizePurchaseDate(''), null);
+  assert.equal(normalizePurchaseDate('2024-02-30'), null);
+});
+
+test('classifyHeaderLabels preserves categories and separates sales badges', () => {
+  assert.deepEqual(
+    classifyHeaderLabels(['オリジナル同人誌', '同人', '一般', '発売開始', '専売']),
+    {
+      headerLabels: ['オリジナル同人誌', '同人', '一般', '発売開始', '専売'],
+      productCategory: 'オリジナル同人誌',
+      marketCategory: '同人',
+      ageLabel: '一般',
+      salesBadges: ['発売開始', '専売'],
+    }
+  );
+});
+
+test('purchase quantities are derived from acquisition batches', () => {
+  assert.equal(getOwnedQuantity({ acquisitions: [{ quantity: 1 }, { quantity: 2 }] }), 3);
+  assert.equal(getOwnedQuantity({ acquisitions: [] }), 0);
+});
+
+test('mergeProductRecords combines acquisition ids and user tags', () => {
+  const merged = mergeProductRecords(
+    {
+      key: 'melonbooks:1',
+      updatedAt: '2026-08-20T00:00:00Z',
+      acquisitions: [{ id: 'a', quantity: 1 }],
+      officialTags: ['标签A'],
+      userTags: ['自定义A'],
+      images: [{ sourceUrl: 'old' }],
+    },
+    {
+      key: 'melonbooks:1',
+      updatedAt: '2026-08-21T00:00:00Z',
+      acquisitions: [{ id: 'b', quantity: 2 }],
+      officialTags: ['标签A', '标签B'],
+      userTags: ['自定义B'],
+      images: [],
+    }
+  );
+  assert.deepEqual(merged.acquisitions.map(({ id }) => id), ['a', 'b']);
+  assert.deepEqual(merged.officialTags, ['标签A', '标签B']);
+  assert.deepEqual(merged.userTags, ['自定义A', '自定义B']);
+  assert.deepEqual(merged.images, [{ sourceUrl: 'old' }]);
 });
 
 test('saveSettings removes defaults and persists a normalized custom configuration', (t) => {

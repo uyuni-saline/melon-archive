@@ -2,7 +2,7 @@
 
 ## Project scope
 
-Melon Archive is a dependency-free userscript for Melonbooks product detail pages. It extracts product metadata, builds a normalized archive title, replaces the page's original heading text, copies the title, and optionally downloads the displayed cover image.
+Melon Archive is a dependency-free userscript for Melonbooks product detail pages. It extracts product metadata, builds a normalized archive title, manages private doujin purchase records, and archives product images in browser storage or an authorized local directory.
 
 Keep `README.md` user-facing. Installation, usage, permissions, privacy, troubleshooting, and support information belong there. Development notes, architecture, tests, release work, and implementation history belong in this file or the pull request description.
 
@@ -24,9 +24,10 @@ The userscript is organized in the following order:
 3. settings defaults, validation, and persistent storage helpers
 4. pure normalization and title-building helpers
 5. site and DOM extraction helpers
-6. cover discovery and download helpers
-7. page UI and Shadow DOM settings dialog
-8. startup and CommonJS test exports
+6. product archive extraction and IndexedDB helpers
+7. cover discovery, image hashing, thumbnail, and directory helpers
+8. page UI, purchase dialog, and Shadow DOM settings dialog
+9. startup and CommonJS test exports
 
 Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title formatting and filename handling independent of the DOM so they can be tested in Node.
 
@@ -56,6 +57,15 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Persist only validated known boolean settings. Merge missing settings with defaults and remove storage when every value equals its default.
 - Apply saved settings after saving and refreshing the current product page.
 - Button status text must not append the generated title.
+- Show the purchase-record button only when the page header classification contains `同人`.
+- Keep `recordedAt` separate from the optional user-entered `purchasedOn`; accept year, month, or day precision.
+- Derive owned quantity from acquisition batches and display quantities greater than one as `✅已购买 ×N`.
+- Keep official storefront tags separate from user tags and preserve circle comments and staff recommendations independently.
+- Use `source + product_id` as the stable product key. Preserve original, composed, and component title values.
+- Browser image storage uses IndexedDB Blob records keyed by SHA-256. The default scope stores only a compressed cover thumbnail.
+- Local-directory image storage requires an explicitly selected File System Access directory and writes content-addressed images plus per-product JSON. Never request a broad filesystem path automatically.
+- Missing scalar metadata uses `null`, missing collections use `[]`, and failed image downloads retain an explicit status.
+- Metadata JSON exports never embed image Blob data; imports merge acquisitions by ID instead of overwriting them.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
 
@@ -108,6 +118,12 @@ Confirm the following:
 - busy, success, missing-cover, and download-error states remain understandable;
 - keyboard focus and activation work on both buttons;
 - when enabled, the original favorite-circle and wishlist controls retain their behavior after moving above the delivery-method accordion.
+- the purchase button appears on doujin pages, restores its quantity from IndexedDB, and does not appear for unsupported product categories;
+- purchase records preserve separate recorded and optional purchase dates, repeated batches, notes, and user tags;
+- product records include the three header classifications, official tags, circle comment, staff recommendation, and optional fields without fabricated placeholders;
+- browser image modes store the selected scope with SHA-256 deduplication, while directory mode writes only inside the selected directory;
+- NowPrinting content is deduplicated even when served from different URLs;
+- metadata export/import round-trips and merges different acquisition IDs without embedding image blobs.
 
 Actual storefront HTML can change independently of this repository, so Node tests do not replace this manual verification.
 
