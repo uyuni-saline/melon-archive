@@ -7,6 +7,7 @@ const {
   buildTitle,
   buildTitleParts,
   classifyHeaderLabels,
+  createAcquisition,
   enablePriceCopy,
   extractNumericPrice,
   formatFieldButtonText,
@@ -68,7 +69,7 @@ test('normalizeSettings validates known options and fills defaults', () => {
       unknownOption: true,
     }),
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       includeBracketedContent: false,
       enablePriceCopy: true,
       showIssueDate: true,
@@ -79,6 +80,7 @@ test('normalizeSettings validates known options and fills defaults', () => {
       includeAuthor: true,
       includeGenre: false,
       enablePurchaseRecords: true,
+      copyTitleOnDownload: false,
       imageBackend: 'browser',
       imageScope: 'thumbnail',
     }
@@ -91,15 +93,33 @@ test('normalizeSettings validates image backend options', () => {
   assert.equal(normalizeSettings({ imageBackend: 'invalid' }).imageBackend, 'browser');
 });
 
-test('normalizePurchaseDate preserves known precision and rejects invalid dates', () => {
-  assert.deepEqual(normalizePurchaseDate('2024'), { value: '2024', precision: 'year' });
-  assert.deepEqual(normalizePurchaseDate('2024/8'), { value: '2024-08', precision: 'month' });
+test('normalizePurchaseDate accepts day precision only and rejects invalid dates', () => {
+  assert.equal(normalizePurchaseDate('2024'), null);
+  assert.equal(normalizePurchaseDate('2024/8'), null);
   assert.deepEqual(normalizePurchaseDate('2024-08-17'), {
     value: '2024-08-17',
     precision: 'day',
   });
   assert.equal(normalizePurchaseDate(''), null);
   assert.equal(normalizePurchaseDate('2024-02-30'), null);
+});
+
+test('createAcquisition marks only valid default dates and preserves day precision', () => {
+  const automatic = createAcquisition({
+    id: 'automatic',
+    purchaseDate: '2026-08-17',
+    purchaseDateIsDefault: true,
+    recordedAt: '2026-08-24T00:00:00.000Z',
+  });
+  assert.deepEqual(automatic, {
+    id: 'automatic',
+    quantity: 1,
+    purchasedOn: { value: '2026-08-17', precision: 'day' },
+    purchaseDateIsDefault: true,
+    recordedAt: '2026-08-24T00:00:00.000Z',
+  });
+  assert.equal(createAcquisition({ id: 'blank', purchaseDateIsDefault: true }).purchaseDateIsDefault, false);
+  assert.throws(() => createAcquisition({ purchaseDate: '2026-08' }), /YYYY-MM-DD/);
 });
 
 test('classifyHeaderLabels preserves categories and separates sales badges', () => {

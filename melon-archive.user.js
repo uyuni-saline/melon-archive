@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      2.0.0
+// @version      2.1.0
 // @description  在Melonbooks同人商品页生成规范标题、归档图片并管理私人购买记录。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -33,7 +33,7 @@
   const SETTINGS_MODAL_ID = 'melon-archive-settings-host';
   const PURCHASE_MODAL_ID = 'melon-archive-purchase-host';
   const SETTINGS_STORAGE_KEY = 'settings';
-  const SETTINGS_SCHEMA_VERSION = 2;
+  const SETTINGS_SCHEMA_VERSION = 3;
   const ARCHIVE_SCHEMA_VERSION = 1;
   const DATABASE_NAME = 'melon-archive';
   const DATABASE_VERSION = 1;
@@ -55,6 +55,7 @@
     includeAuthor: true,
     includeGenre: true,
     enablePurchaseRecords: true,
+    copyTitleOnDownload: false,
     imageBackend: 'browser',
     imageScope: 'thumbnail',
   });
@@ -70,6 +71,7 @@
     'includeAuthor',
     'includeGenre',
     'enablePurchaseRecords',
+    'copyTitleOnDownload',
   ]);
 
   const SETTINGS_ENUMS = Object.freeze({
@@ -203,6 +205,20 @@
 .melon-archive-button--purchase {
   color: var(--melon-archive-action-text);
   background: var(--melon-archive-purchase-color);
+}
+
+.melon-archive-button--purchase-edit {
+  width: 35px;
+  height: 35px;
+  padding: 0;
+  border: 1px solid #cfcfcf;
+  color: #444;
+  background: #f7f7f7;
+  font-size: 16px;
+}
+
+.melon-archive-button--purchase-edit[hidden] {
+  display: none;
 }
 
 .melon-archive-button:hover {
@@ -417,13 +433,38 @@
 }
 
 .record-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px auto;
+  align-items: end;
   gap: 10px;
   border: 1px solid #e1e1e1;
   border-radius: 4px;
   padding: 8px 10px;
+}
+
+.record-row .field {
+  min-width: 0;
+}
+
+.record-row .field > span {
+  font-size: 12px;
+}
+
+.record-row .default-date {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+  color: #54805d;
+  font-size: 11px;
+}
+
+@media screen and (max-width: 520px) {
+  .record-row {
+    grid-template-columns: minmax(0, 1fr) 80px;
+  }
+
+  .record-row button {
+    grid-column: 1 / -1;
+  }
 }
 
 .record-row button,
@@ -644,24 +685,22 @@ legend {
   }
 
   /**
-   * 接受YYYY、YYYY-MM或YYYY-MM-DD，并保留用户实际记得的日期精度。
+   * 购买日期固定使用日精度；空值表示日期未知。
    * @param {unknown} value
-   * @returns {{value: string, precision: 'year'|'month'|'day'}|null}
+   * @returns {{value: string, precision: 'day'}|null}
    */
   function normalizePurchaseDate(value) {
     const normalized = normalizeSpaces(value).replace(/[./]/gu, '-');
     if (!normalized) return null;
 
-    const match = normalized.match(/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$/u);
+    const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/u);
     if (!match) return null;
     const year = Number(match[1]);
-    const month = match[2] ? Number(match[2]) : null;
-    const day = match[3] ? Number(match[3]) : null;
+    const month = Number(match[2]);
+    const day = Number(match[3]);
     if (year < 1900 || year > 2200) return null;
-    if (month === null) return { value: String(year), precision: 'year' };
     if (month < 1 || month > 12) return null;
     const monthValue = `${year}-${String(month).padStart(2, '0')}`;
-    if (day === null) return { value: monthValue, precision: 'month' };
 
     const date = new Date(Date.UTC(year, month - 1, day));
     if (
@@ -672,6 +711,38 @@ legend {
       return null;
     }
     return { value: `${monthValue}-${String(day).padStart(2, '0')}`, precision: 'day' };
+  }
+
+  /**
+   * 建立一条购买批次。自动日期仅用于首次从页面発行日快速入库。
+   * @param {object} options
+   * @param {unknown} [options.purchaseDate]
+   * @param {number} [options.quantity]
+   * @param {boolean} [options.purchaseDateIsDefault]
+   * @param {string} [options.id]
+   * @param {string} [options.recordedAt]
+   */
+  function createAcquisition({
+    purchaseDate = '',
+    quantity = 1,
+    purchaseDateIsDefault = false,
+    id = createRecordId(),
+    recordedAt = new Date().toISOString(),
+  } = {}) {
+    const normalizedQuantity = Number(quantity);
+    if (!Number.isInteger(normalizedQuantity) || normalizedQuantity < 1 || normalizedQuantity > 999) {
+      throw new Error('购买数量必须是1至999之间的整数。');
+    }
+    const dateInput = normalizeSpaces(purchaseDate);
+    const purchasedOn = normalizePurchaseDate(dateInput);
+    if (dateInput && !purchasedOn) throw new Error('购买日期请使用YYYY-MM-DD格式。');
+    return {
+      id,
+      quantity: normalizedQuantity,
+      purchasedOn,
+      purchaseDateIsDefault: Boolean(purchasedOn && purchaseDateIsDefault),
+      recordedAt,
+    };
   }
 
   /**
@@ -1651,11 +1722,13 @@ legend {
     );
   }
 
-  function updatePurchaseButton(button, productRecord) {
+  function updatePurchaseControls(button, editButton, productRecord) {
     const quantity = getOwnedQuantity(productRecord);
-    button.textContent = quantity > 1 ? `✅已购买 ×${quantity}` : quantity === 1 ? '✅已购买' : '🛍️标记已购买';
-    button.title = quantity ? `持有数量：${quantity}；点击管理购买记录` : '标记为已购买';
+    button.textContent = quantity > 1 ? `✅已购入 ×${quantity}` : quantity === 1 ? '✅已购入' : '🛍️标记已购入';
+    button.title = quantity ? `持有数量：${quantity}；使用右侧齿轮修改记录` : '立即标记为已购入';
     button.classList.toggle('is-done', quantity > 0);
+    editButton.hidden = quantity === 0;
+    editButton.title = quantity ? `修改购入记录（持有${quantity}件）` : '尚无购入记录';
   }
 
   function parseUserTags(value) {
@@ -1676,9 +1749,9 @@ legend {
     return [...merged, ...(existingImages ?? []).filter((image) => !freshUrls.has(image.sourceUrl))];
   }
 
-  async function savePurchaseProduct(site, product, composedTitle, existingRecord, form, addBatch) {
+  function mergePageProduct(site, product, composedTitle, existingRecord) {
     const freshRecord = buildArchiveProduct(site, product, composedTitle);
-    const record = existingRecord
+    return existingRecord
       ? {
           ...freshRecord,
           acquisitions: [...(existingRecord.acquisitions ?? [])],
@@ -1688,52 +1761,37 @@ legend {
           recordedAt: existingRecord.recordedAt ?? freshRecord.recordedAt,
         }
       : freshRecord;
+  }
 
-    record.note = form.elements.note.value.trim();
-    record.userTags = parseUserTags(form.elements.userTags.value);
-    if (addBatch) {
-      const quantity = Number(form.elements.quantity.value);
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
-        throw new Error('购买数量必须是1至999之间的整数。');
-      }
-      const dateInput = normalizeSpaces(form.elements.purchaseDate.value);
-      const purchasedOn = normalizePurchaseDate(dateInput);
-      if (dateInput && !purchasedOn) {
-        throw new Error('购买日期请使用YYYY、YYYY-MM或YYYY-MM-DD格式。');
-      }
-      record.acquisitions.push({
-        id: createRecordId(),
-        quantity,
-        purchasedOn,
-        recordedAt: new Date().toISOString(),
-      });
-    }
+  async function quickAddPurchase(site, product, composedTitle, existingRecord) {
+    const record = mergePageProduct(site, product, composedTitle, existingRecord);
+    if (getOwnedQuantity(record) > 0) return record;
+    const publicationDate = record.details?.publicationDate ?? '';
+    record.acquisitions.push(
+      createAcquisition({
+        purchaseDate: publicationDate,
+        purchaseDateIsDefault: Boolean(publicationDate),
+      })
+    );
     record.updatedAt = new Date().toISOString();
     await databasePut('products', record);
     return record;
   }
 
-  async function removeAcquisition(productRecord, acquisitionId) {
-    const updated = {
-      ...productRecord,
-      acquisitions: (productRecord.acquisitions ?? []).filter(
-        (acquisition) => acquisition.id !== acquisitionId
-      ),
-      updatedAt: new Date().toISOString(),
-    };
-    await databasePut('products', updated);
-    return updated;
-  }
-
-  function formatAcquisition(acquisition) {
-    const date = acquisition.purchasedOn?.value || '购买日期未知';
-    const recorded = new Date(acquisition.recordedAt).toLocaleDateString('zh-CN');
-    return `${date} · 数量${acquisition.quantity} · 入库${recorded}`;
-  }
-
-  async function openPurchaseDialog(site, product, getTitle, purchaseButton, settings) {
+  async function openPurchaseEditor(getTitle, purchaseButton, editButton) {
     if (document.getElementById(PURCHASE_MODAL_ID)) return false;
     let currentRecord = (await databaseGet('products', getProductIdentity().key)) ?? null;
+    if (!currentRecord || getOwnedQuantity(currentRecord) === 0) {
+      notify('当前商品还没有可修改的购入记录。');
+      return false;
+    }
+    const originalAcquisitions = new Map(
+      (currentRecord.acquisitions ?? []).map((acquisition) => [acquisition.id, acquisition])
+    );
+    const draftAcquisitions = (currentRecord.acquisitions ?? []).map((acquisition) => ({
+      ...acquisition,
+      purchasedOn: acquisition.purchasedOn ? { ...acquisition.purchasedOn } : null,
+    }));
     const previousFocus = document.activeElement;
     const host = document.createElement('div');
     host.id = PURCHASE_MODAL_ID;
@@ -1743,22 +1801,17 @@ legend {
       <div class="backdrop">
         <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="melon-archive-purchase-title">
           <header class="header">
-            <h2 id="melon-archive-purchase-title">🛍️ 购买记录</h2>
+            <h2 id="melon-archive-purchase-title">⚙️ 修改购入记录</h2>
             <button class="close" type="button" data-action="close" aria-label="关闭">×</button>
           </header>
           <form>
             <div class="body">
               <p class="summary" data-role="title"></p>
-              <fieldset data-role="existing-fieldset">
-                <legend>已保存的购买批次</legend>
-                <ul class="record-list" data-role="record-list"></ul>
-                <p class="hint">持有数量由所有购买批次的数量合计得出。</p>
-              </fieldset>
               <fieldset>
-                <legend data-role="batch-legend">购买信息</legend>
-                <label class="field"><span>实际购买日期（可留空）</span><input name="purchaseDate" type="text" inputmode="numeric" placeholder="YYYY、YYYY-MM或YYYY-MM-DD"></label>
-                <label class="field"><span>购买数量</span><input name="quantity" type="number" min="1" max="999" step="1" value="1" required></label>
-                <p class="hint">入库时间由脚本自动记录，与实际购买日期分别保存。</p>
+                <legend>购入批次</legend>
+                <ul class="record-list" data-role="record-list"></ul>
+                <div class="inline-actions"><button type="button" data-action="add-batch">＋添加购入批次</button></div>
+                <p class="hint">购入日固定为日精度并可留空；持有数量由所有批次数量合计得出。删除批次后需点击保存才会生效。</p>
               </fieldset>
               <fieldset>
                 <legend>个人整理</legend>
@@ -1769,8 +1822,7 @@ legend {
             </div>
             <footer class="actions">
               <button type="button" data-action="close">取消</button>
-              <button type="submit" data-submit="metadata">仅保存备注与标签</button>
-              <button class="save" type="submit" data-submit="batch">保存购买批次</button>
+              <button class="save" type="submit">保存修改</button>
             </footer>
           </form>
         </section>
@@ -1780,8 +1832,6 @@ legend {
     const form = shadow.querySelector('form');
     const backdrop = shadow.querySelector('.backdrop');
     const recordList = shadow.querySelector('[data-role="record-list"]');
-    const existingFieldset = shadow.querySelector('[data-role="existing-fieldset"]');
-    const metadataButton = shadow.querySelector('[data-submit="metadata"]');
     const status = shadow.querySelector('[data-role="status"]');
     shadow.querySelector('[data-role="title"]').textContent = getTitle();
     form.elements.note.value = currentRecord?.note ?? '';
@@ -1793,29 +1843,73 @@ legend {
     };
     const renderAcquisitions = () => {
       recordList.replaceChildren();
-      const acquisitions = currentRecord?.acquisitions ?? [];
-      existingFieldset.hidden = acquisitions.length === 0;
-      metadataButton.hidden = !currentRecord;
-      for (const acquisition of acquisitions) {
+      for (const acquisition of draftAcquisitions) {
         const item = document.createElement('li');
         item.className = 'record-row';
-        const text = document.createElement('span');
-        text.textContent = formatAcquisition(acquisition);
+        item.dataset.acquisitionId = acquisition.id;
+        const dateLabel = document.createElement('label');
+        dateLabel.className = 'field';
+        dateLabel.innerHTML = '<span>购入日</span>';
+        const dateInput = document.createElement('input');
+        dateInput.type = 'date';
+        dateInput.name = `purchaseDate-${acquisition.id}`;
+        dateInput.value = acquisition.purchasedOn?.precision === 'day' ? acquisition.purchasedOn.value : '';
+        dateInput.addEventListener('input', () => {
+          item.dataset.dateTouched = 'true';
+          item.querySelector('.default-date')?.remove();
+        });
+        dateLabel.append(dateInput);
+        const quantityLabel = document.createElement('label');
+        quantityLabel.className = 'field';
+        quantityLabel.innerHTML = '<span>数量</span>';
+        const quantityInput = document.createElement('input');
+        quantityInput.type = 'number';
+        quantityInput.name = `quantity-${acquisition.id}`;
+        quantityInput.min = '1';
+        quantityInput.max = '999';
+        quantityInput.step = '1';
+        quantityInput.required = true;
+        quantityInput.value = String(acquisition.quantity);
+        quantityLabel.append(quantityInput);
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
         removeButton.className = 'danger';
         removeButton.textContent = '删除';
-        removeButton.addEventListener('click', async () => {
-          if (!window.confirm('删除这个购买批次？商品资料和图片不会被删除。')) return;
-          currentRecord = await removeAcquisition(currentRecord, acquisition.id);
-          updatePurchaseButton(purchaseButton, currentRecord);
+        removeButton.addEventListener('click', () => {
+          draftAcquisitions.splice(
+            draftAcquisitions.findIndex((candidate) => candidate.id === acquisition.id),
+            1
+          );
           renderAcquisitions();
         });
-        item.append(text, removeButton);
+        item.append(dateLabel, quantityLabel, removeButton);
+        if (acquisition.purchaseDateIsDefault) {
+          const hint = document.createElement('p');
+          hint.className = 'default-date';
+          hint.textContent = '此日期由商品発行日自动填写；手动修改后将不再标记为默认值。';
+          item.append(hint);
+        } else if (acquisition.purchasedOn && acquisition.purchasedOn.precision !== 'day') {
+          const hint = document.createElement('p');
+          hint.className = 'default-date';
+          hint.textContent = `旧记录日期为${acquisition.purchasedOn.value}；未修改时保留原值，修改时请选择完整日期。`;
+          item.append(hint);
+        }
         recordList.append(item);
+      }
+      if (draftAcquisitions.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'hint';
+        empty.textContent = '没有购入批次；保存后该商品将不再显示为已购入。';
+        recordList.append(empty);
       }
     };
     renderAcquisitions();
+
+    shadow.querySelector('[data-action="add-batch"]').addEventListener('click', () => {
+      draftAcquisitions.push(createAcquisition());
+      renderAcquisitions();
+      recordList.lastElementChild?.querySelector('input')?.focus();
+    });
 
     for (const button of shadow.querySelectorAll('[data-action="close"]')) {
       button.addEventListener('click', close);
@@ -1828,49 +1922,53 @@ legend {
     });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const submitter = event.submitter;
-      const addBatch = submitter?.dataset.submit === 'batch';
       for (const button of form.querySelectorAll('button')) button.disabled = true;
-      status.textContent = '正在保存购买记录…';
+      status.textContent = '正在保存购入记录…';
       try {
-        currentRecord = await savePurchaseProduct(
-          site,
-          product,
-          getTitle(),
-          currentRecord,
-          form,
-          addBatch
-        );
-        updatePurchaseButton(purchaseButton, currentRecord);
+        const acquisitions = draftAcquisitions.map((draft) => {
+          const row = recordList.querySelector(`[data-acquisition-id="${CSS.escape(draft.id)}"]`);
+          const dateInput = row.querySelector(`input[name="purchaseDate-${CSS.escape(draft.id)}"]`);
+          const quantityInput = row.querySelector(`input[name="quantity-${CSS.escape(draft.id)}"]`);
+          const original = originalAcquisitions.get(draft.id);
+          const acquisition = createAcquisition({
+            id: draft.id,
+            purchaseDate: dateInput.value,
+            quantity: Number(quantityInput.value),
+            purchaseDateIsDefault: Boolean(
+              original?.purchaseDateIsDefault && row.dataset.dateTouched !== 'true'
+            ),
+            recordedAt: draft.recordedAt,
+          });
+          if (
+            original?.purchasedOn?.precision !== 'day' &&
+            original?.purchasedOn &&
+            row.dataset.dateTouched !== 'true'
+          ) {
+            acquisition.purchasedOn = { ...original.purchasedOn };
+            acquisition.purchaseDateIsDefault = false;
+          }
+          return acquisition;
+        });
+        currentRecord = {
+          ...currentRecord,
+          acquisitions,
+          note: form.elements.note.value.trim(),
+          userTags: parseUserTags(form.elements.userTags.value),
+          updatedAt: new Date().toISOString(),
+        };
+        await databasePut('products', currentRecord);
+        updatePurchaseControls(purchaseButton, editButton, currentRecord);
         close();
-        purchaseButton.disabled = true;
-        purchaseButton.classList.add('is-busy');
-        purchaseButton.textContent = '⏳归档图片…';
-        try {
-          currentRecord = await archiveProductImages(currentRecord, settings);
-          await databasePut('products', currentRecord);
-          notify('购买记录和图片归档已保存。');
-        } catch (archiveError) {
-          console.warn(`[${SCRIPT_LABEL}] Purchase saved without image archive.`, archiveError);
-          notify(
-            `购买记录已保存，但图片归档失败：${
-              archiveError instanceof Error ? archiveError.message : String(archiveError)
-            }`
-          );
-        } finally {
-          updatePurchaseButton(purchaseButton, currentRecord);
-          purchaseButton.disabled = false;
-          purchaseButton.classList.remove('is-busy');
-        }
+        notify('购入记录已更新。');
       } catch (error) {
-        console.error(`[${SCRIPT_LABEL}] Purchase record failed.`, error);
+        console.error(`[${SCRIPT_LABEL}] Purchase record update failed.`, error);
         status.textContent = error instanceof Error ? error.message : String(error);
         for (const button of form.querySelectorAll('button')) button.disabled = false;
       }
     });
 
     document.documentElement.append(host);
-    form.elements.purchaseDate.focus();
+    recordList.querySelector('input')?.focus();
     return true;
   }
 
@@ -1991,14 +2089,20 @@ legend {
   }
 
   /**
-   * 复制标题并下载封面。
+   * 下载封面；仅在用户显式启用设置时同时复制标题。
    * @param {typeof SITE_DEFINITION} site
    * @param {() => string} getTitle
    * @param {HTMLButtonElement} button
+   * @param {boolean} copyTitleOnDownload
    */
-  async function copyAndDownload(site, getTitle, button) {
-    const title = copyTitle(getTitle, button);
-    if (!title) return;
+  async function downloadCover(site, getTitle, button, copyTitleOnDownload) {
+    const title = getTitle();
+    if (!title) {
+      button.textContent = '❌ 未找到标题';
+      notify('未能从页面提取商品标题，页面结构可能已经变化。');
+      return;
+    }
+    if (copyTitleOnDownload) GM_setClipboard(title, 'text');
 
     const coverUrl = findCoverUrl(site);
     if (!coverUrl) {
@@ -2077,6 +2181,7 @@ legend {
                 <label class="option"><input type="checkbox" data-setting="moveFavoriteActions">移动收藏与愿望单按钮</label>
                 <label class="option"><input type="checkbox" data-setting="showFieldButtons">显示五个字段复制按钮</label>
                 <label class="option"><input type="checkbox" data-setting="enablePurchaseRecords">启用私人购买记录</label>
+                <label class="option"><input type="checkbox" data-setting="copyTitleOnDownload">下载封面时同时复制标题</label>
               </fieldset>
               <fieldset>
                 <legend>拼接标题格式</legend>
@@ -2258,8 +2363,11 @@ legend {
       const buttonGroup = document.createElement('div');
       buttonGroup.className = 'melon-archive-buttons';
       const copyButton = createButton('📋复制信息', 'copy');
-      const downloadButton = createButton('📥复制并下载封面', 'download');
-      const purchaseButton = createButton('🛍️标记已购买', 'purchase');
+      const downloadButton = createButton('📥下载封面', 'download');
+      const purchaseButton = createButton('🛍️标记已购入', 'purchase');
+      const purchaseEditButton = createButton('⚙️', 'purchase-edit');
+      purchaseEditButton.hidden = true;
+      purchaseEditButton.setAttribute('aria-label', '修改购入记录');
       const product = extractProduct(site);
       const isDoujinProduct = extractHeaderClassifications().headerLabels.some((label) =>
         label.includes('同人')
@@ -2285,13 +2393,55 @@ legend {
 
       copyButton.addEventListener('click', () => copyTitle(getCurrentTitle, copyButton));
       downloadButton.addEventListener('click', () =>
-        void copyAndDownload(site, getCurrentTitle, downloadButton)
+        void downloadCover(site, getCurrentTitle, downloadButton, settings.copyTitleOnDownload)
       );
       purchaseButton.addEventListener('click', () => {
-        void openPurchaseDialog(site, product, getCurrentTitle, purchaseButton, settings).catch(
+        void (async () => {
+          const storedRecord = await databaseGet('products', getProductIdentity().key);
+          if (getOwnedQuantity(storedRecord) > 0) {
+            notify('该商品已购入，请使用右侧齿轮修改记录。');
+            return;
+          }
+          purchaseButton.disabled = true;
+          purchaseButton.classList.add('is-busy');
+          purchaseButton.textContent = '⏳正在入库…';
+          let savedRecord = await quickAddPurchase(
+            site,
+            product,
+            getCurrentTitle(),
+            storedRecord
+          );
+          updatePurchaseControls(purchaseButton, purchaseEditButton, savedRecord);
+          purchaseButton.textContent = '⏳归档图片…';
+          try {
+            savedRecord = await archiveProductImages(savedRecord, settings);
+            await databasePut('products', savedRecord);
+            notify('购入记录和图片归档已保存。');
+          } catch (archiveError) {
+            console.warn(`[${SCRIPT_LABEL}] Purchase saved without image archive.`, archiveError);
+            notify(
+              `购入记录已保存，但图片归档失败：${
+                archiveError instanceof Error ? archiveError.message : String(archiveError)
+              }`
+            );
+          } finally {
+            purchaseButton.disabled = false;
+            purchaseButton.classList.remove('is-busy');
+            updatePurchaseControls(purchaseButton, purchaseEditButton, savedRecord);
+          }
+        })().catch((error) => {
+          console.error(`[${SCRIPT_LABEL}] Purchase quick add failed.`, error);
+          purchaseButton.disabled = false;
+          purchaseButton.classList.remove('is-busy');
+          updatePurchaseControls(purchaseButton, purchaseEditButton, null);
+          notify(`购入记录保存失败：${error instanceof Error ? error.message : String(error)}`);
+        });
+      });
+      purchaseEditButton.addEventListener('click', () => {
+        void openPurchaseEditor(getCurrentTitle, purchaseButton, purchaseEditButton).catch(
           (error) => {
-            console.error(`[${SCRIPT_LABEL}] Purchase dialog failed.`, error);
-            notify(`购买记录无法打开：${error instanceof Error ? error.message : String(error)}`);
+            console.error(`[${SCRIPT_LABEL}] Purchase editor failed.`, error);
+            notify(`购入记录无法打开：${error instanceof Error ? error.message : String(error)}`);
           }
         );
       });
@@ -2336,10 +2486,10 @@ legend {
 
       buttonGroup.append(copyButton, downloadButton);
       if (settings.enablePurchaseRecords && isDoujinProduct) {
-        buttonGroup.append(purchaseButton);
+        buttonGroup.append(purchaseButton, purchaseEditButton);
         try {
           const storedProduct = await databaseGet('products', getProductIdentity().key);
-          updatePurchaseButton(purchaseButton, storedProduct);
+          updatePurchaseControls(purchaseButton, purchaseEditButton, storedProduct);
         } catch (error) {
           console.warn(`[${SCRIPT_LABEL}] Purchase database is unavailable.`, error);
           purchaseButton.disabled = true;
@@ -2402,6 +2552,7 @@ legend {
       buildTitle,
       buildTitleParts,
       classifyHeaderLabels,
+      createAcquisition,
       enablePriceCopy,
       extractNumericPrice,
       formatBytes,

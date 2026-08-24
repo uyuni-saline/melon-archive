@@ -58,8 +58,12 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Apply saved settings after saving and refreshing the current product page.
 - Button status text must not append the generated title.
 - Show the purchase-record button only when the page header classification contains `同人`.
-- Keep `recordedAt` separate from the optional user-entered `purchasedOn`; accept year, month, or day precision.
-- Derive owned quantity from acquisition batches and display quantities greater than one as `✅已购买 ×N`.
+- Keep `recordedAt` separate from the optional `purchasedOn`; purchase dates use day precision only.
+- Quick-add a first purchase without a confirmation dialog. Default its quantity to one, note and user tags to empty values, and `purchasedOn` to the page publication date when available.
+- Store `purchaseDateIsDefault` on each acquisition. Set it only when quick-add uses the page publication date, and clear it after the user touches that date in the editor.
+- Use the gear button beside an existing purchase to edit batches, day-precision dates, quantities, notes, and user tags.
+- Derive owned quantity from acquisition batches and display quantities greater than one as `✅已购入 ×N`.
+- Download covers without copying by default; copy the current composed title only when the persistent `copyTitleOnDownload` setting is enabled.
 - Keep official storefront tags separate from user tags and preserve circle comments and staff recommendations independently.
 - Use `source + product_id` as the stable product key. Preserve original, composed, and component title values.
 - Browser image storage uses IndexedDB Blob records keyed by SHA-256. The default scope stores only a compressed cover thumbnail.
@@ -110,7 +114,7 @@ Confirm the following:
 - the full-width bracket option appears only for applicable original titles, follows the primary buttons, uses the saved default, and updates the heading and title field immediately;
 - title-format settings independently omit event, circle, author, and genre while always retaining the product title;
 - extracted event, circle, author, title, and genre are not duplicated;
-- both buttons copy the title currently shown in the heading without appending it to button text;
+- the copy button always copies the title currently shown in the heading; the download button copies it only when the corresponding setting is enabled, and neither appends the title to button text;
 - both primary buttons adapt their widths to their current status text;
 - when enabled, clicking the main product price, or activating it with Enter or Space, copies digits only and does not affect prices in related-product lists;
 - when enabled, the normalized `発行日` appears immediately above `発売日` when the source field is present;
@@ -119,7 +123,9 @@ Confirm the following:
 - keyboard focus and activation work on both buttons;
 - when enabled, the original favorite-circle and wishlist controls retain their behavior after moving above the delivery-method accordion.
 - the purchase button appears on doujin pages, restores its quantity from IndexedDB, and does not appear for unsupported product categories;
-- purchase records preserve separate recorded and optional purchase dates, repeated batches, notes, and user tags;
+- first-time purchase marking saves immediately with quantity one, blank note/tags, and the publication date as the day-precision purchase date when available;
+- the automatic-date flag is present only for the quick-added publication date and is cleared after a manual date edit;
+- the gear control appears beside existing purchases and edits repeated batches, dates, quantities, notes, and user tags;
 - product records include the three header classifications, official tags, circle comment, staff recommendation, and optional fields without fabricated placeholders;
 - browser image modes store the selected scope with SHA-256 deduplication, while directory mode writes only inside the selected directory;
 - NowPrinting content is deduplicated even when served from different URLs;
