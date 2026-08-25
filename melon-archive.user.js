@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      2.1.0
+// @version      2.2.0
 // @description  在Melonbooks同人商品页生成规范标题、归档图片并管理私人购买记录。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -32,6 +32,8 @@
   const ISSUE_DATE_ID = 'melon-archive-issue-date';
   const SETTINGS_MODAL_ID = 'melon-archive-settings-host';
   const PURCHASE_MODAL_ID = 'melon-archive-purchase-host';
+  const ARCHIVE_BROWSER_ID = 'melon-archive-browser-host';
+  const ARCHIVE_CHANGED_EVENT = 'melon-archive-record-changed';
   const SETTINGS_STORAGE_KEY = 'settings';
   const SETTINGS_SCHEMA_VERSION = 3;
   const ARCHIVE_SCHEMA_VERSION = 1;
@@ -42,6 +44,7 @@
   const AUTHOR_PLACEHOLDER = true;
   const ELEMENT_WAIT_TIMEOUT_MS = 12_000;
   const DOWNLOAD_TIMEOUT_MS = 30_000;
+  const ARCHIVE_PAGE_SIZE = 50;
 
   const DEFAULT_SETTINGS = Object.freeze({
     schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -565,6 +568,413 @@ legend {
 .actions .save {
   border-color: #46aeb8;
   background: #56C0CA;
+}
+`;
+
+  const ARCHIVE_BROWSER_STYLES = `${SETTINGS_STYLES}
+.backdrop {
+  padding: 10px;
+}
+
+.archive-dialog {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(1440px, 100%);
+  height: calc(100vh - 20px);
+  max-height: none;
+  overflow: hidden;
+}
+
+.archive-header-actions,
+.archive-actions,
+.archive-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.archive-header-actions button,
+.archive-actions button,
+.archive-pagination button,
+.record-actions button,
+.detail-actions button {
+  appearance: none;
+  min-height: 34px;
+  border: 1px solid #cfcfcf;
+  border-radius: 4px;
+  padding: 6px 11px;
+  color: #252525;
+  background: #fff;
+  font: 600 12px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+  cursor: pointer;
+}
+
+.archive-header-actions button:hover,
+.archive-actions button:hover,
+.archive-pagination button:hover,
+.record-actions button:hover,
+.detail-actions button:hover {
+  background: #f1f7f7;
+}
+
+.archive-controls {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid #e6e6e6;
+  padding: 12px 16px;
+  background: #fafafa;
+}
+
+.archive-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.stat-card {
+  display: grid;
+  gap: 2px;
+  border: 1px solid #e0e0e0;
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.stat-card span {
+  color: #666;
+  font-size: 11px;
+}
+
+.stat-card strong {
+  font-size: 16px;
+}
+
+.archive-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.archive-filters label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #555;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.archive-filters input,
+.archive-filters select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #cfcfcf;
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: #222;
+  background: #fff;
+  font: 13px/1.35 "Microsoft YaHei", "Yu Gothic", Helvetica, Arial, sans-serif;
+}
+
+.archive-workspace {
+  display: grid;
+  grid-template-columns: minmax(480px, 3fr) minmax(360px, 2fr);
+  min-height: 0;
+}
+
+.archive-list-pane,
+.archive-detail-pane {
+  min-height: 0;
+  overflow: auto;
+}
+
+.archive-list-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border-right: 1px solid #e3e3e3;
+}
+
+.archive-list-status {
+  margin: 0;
+  border-bottom: 1px solid #ededed;
+  padding: 9px 14px;
+  color: #555;
+  background: #fff;
+  font-size: 12px;
+}
+
+.archive-records {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  list-style: none;
+  overflow: auto;
+}
+
+.archive-record {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 11px;
+  border: 1px solid #dedede;
+  border-radius: 6px;
+  padding: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.archive-record:hover,
+.archive-record:focus-visible,
+.archive-record.is-selected {
+  border-color: #56C0CA;
+  outline: none;
+  background: #f7fcfc;
+}
+
+.record-cover,
+.detail-cover {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #888;
+  background: #f1f1f1;
+}
+
+.record-cover {
+  width: 72px;
+  height: 96px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.record-cover img,
+.detail-cover img,
+.detail-gallery img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.record-content {
+  min-width: 0;
+}
+
+.record-title {
+  display: -webkit-box;
+  margin: 0 0 5px;
+  overflow: hidden;
+  color: #222;
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 700;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.record-meta,
+.record-purchase {
+  margin: 3px 0 0;
+  color: #666;
+  font-size: 12px;
+}
+
+.record-actions {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.record-actions .danger,
+.detail-actions .danger {
+  color: #a12622;
+}
+
+.archive-pagination {
+  justify-content: center;
+  border-top: 1px solid #ededed;
+  padding: 9px 12px;
+  background: #fafafa;
+}
+
+.archive-pagination button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.archive-detail-pane {
+  padding: 16px;
+  background: #fbfbfb;
+}
+
+.detail-empty {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  color: #777;
+  text-align: center;
+}
+
+.detail-content {
+  display: grid;
+  gap: 14px;
+}
+
+.detail-heading {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.detail-cover {
+  width: 120px;
+  height: 160px;
+  border-radius: 4px;
+}
+
+.detail-heading h3 {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.detail-section {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 11px 12px;
+  background: #fff;
+}
+
+.detail-section h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.detail-grid dt {
+  color: #666;
+  font-weight: 600;
+}
+
+.detail-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tag-list li {
+  border-radius: 12px;
+  padding: 2px 8px;
+  color: #276f4f;
+  background: #eaf6ef;
+  font-size: 11px;
+}
+
+.detail-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.detail-image {
+  display: grid;
+  height: 140px;
+  place-items: center;
+  overflow: hidden;
+  color: #888;
+  background: #f1f1f1;
+  font-size: 11px;
+}
+
+.empty-results {
+  margin: 32px auto;
+  color: #777;
+  text-align: center;
+}
+
+@media screen and (max-width: 980px) {
+  .archive-filters {
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+  }
+
+  .archive-filters label:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .archive-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .archive-list-pane {
+    border-right: 0;
+  }
+
+  .archive-detail-pane {
+    display: none;
+    position: fixed;
+    inset: 10px;
+    z-index: 2;
+    border: 1px solid #d8d8d8;
+    border-radius: 8px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .28);
+  }
+
+  .archive-detail-pane.is-open {
+    display: block;
+  }
+}
+
+@media screen and (max-width: 620px) {
+  .archive-stats,
+  .archive-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .archive-record {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .record-cover {
+    width: 58px;
+    height: 78px;
+  }
+
+  .record-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 `;
 
@@ -1698,6 +2108,10 @@ legend {
     console.info(`[${SCRIPT_LABEL}] ${text}`);
   }
 
+  function announceArchiveChange(productKey = null) {
+    window.dispatchEvent(new CustomEvent(ARCHIVE_CHANGED_EVENT, { detail: { productKey } }));
+  }
+
   /**
    * @param {HTMLButtonElement} button
    * @param {string} text
@@ -1720,6 +2134,117 @@ legend {
       (total, acquisition) => total + Math.max(0, Number(acquisition.quantity) || 0),
       0
     );
+  }
+
+  function getLatestPurchaseDate(productRecord) {
+    return (productRecord?.acquisitions ?? [])
+      .map((acquisition) => acquisition.purchasedOn?.value ?? '')
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? '';
+  }
+
+  function getArchiveCategories(productRecord) {
+    return uniqueNonEmpty([
+      productRecord?.titleParts?.genre,
+      productRecord?.classifications?.productCategory,
+      productRecord?.classifications?.marketCategory,
+      productRecord?.classifications?.ageLabel,
+    ]);
+  }
+
+  function buildArchiveSearchText(productRecord) {
+    return uniqueNonEmpty([
+      productRecord?.composedTitle,
+      productRecord?.originalTitle,
+      ...Object.values(productRecord?.titleParts ?? {}),
+      ...getArchiveCategories(productRecord),
+      ...(productRecord?.officialTags ?? []),
+      ...(productRecord?.userTags ?? []),
+      productRecord?.note,
+    ]).join('\n').toLocaleLowerCase();
+  }
+
+  function filterArchiveProducts(products, filters = {}) {
+    const query = normalizeSpaces(filters.query).toLocaleLowerCase();
+    const event = normalizeSpaces(filters.event);
+    const category = normalizeSpaces(filters.category);
+    const dateFrom = normalizeSpaces(filters.dateFrom);
+    const dateTo = normalizeSpaces(filters.dateTo);
+    const noteFilter = filters.note ?? 'all';
+    const imageFilter = filters.image ?? 'all';
+
+    return (products ?? []).filter((productRecord) => {
+      if (getOwnedQuantity(productRecord) <= 0) return false;
+      if (query && !buildArchiveSearchText(productRecord).includes(query)) return false;
+      if (event && normalizeSpaces(productRecord?.titleParts?.event) !== event) return false;
+      if (category && !getArchiveCategories(productRecord).includes(category)) return false;
+      const latestPurchaseDate = getLatestPurchaseDate(productRecord);
+      if (dateFrom && (!latestPurchaseDate || latestPurchaseDate < dateFrom)) return false;
+      if (dateTo && (!latestPurchaseDate || latestPurchaseDate > dateTo)) return false;
+      const hasNote = Boolean(normalizeSpaces(productRecord?.note));
+      if (noteFilter === 'yes' && !hasNote) return false;
+      if (noteFilter === 'no' && hasNote) return false;
+      const hasStoredImage = (productRecord?.images ?? []).some(
+        (image) => image.storageStatus === 'stored'
+      );
+      if (imageFilter === 'stored' && !hasStoredImage) return false;
+      if (imageFilter === 'missing' && hasStoredImage) return false;
+      return true;
+    });
+  }
+
+  function sortArchiveProducts(products, sortKey = 'purchase-desc') {
+    const collator = new Intl.Collator(['zh-CN', 'ja-JP'], { numeric: true, sensitivity: 'base' });
+    const valueFor = (productRecord) => {
+      if (sortKey === 'recorded-desc') return productRecord?.recordedAt ?? '';
+      if (sortKey === 'publication-desc') return productRecord?.details?.publicationDate ?? '';
+      if (sortKey === 'price-desc') return Number(productRecord?.details?.listedPrice) || 0;
+      if (sortKey === 'quantity-desc') return getOwnedQuantity(productRecord);
+      if (sortKey === 'title-asc') return productRecord?.composedTitle ?? productRecord?.originalTitle ?? '';
+      return getLatestPurchaseDate(productRecord);
+    };
+    return [...(products ?? [])].sort((left, right) => {
+      const leftValue = valueFor(left);
+      const rightValue = valueFor(right);
+      const comparison =
+        typeof leftValue === 'number' && typeof rightValue === 'number'
+          ? leftValue - rightValue
+          : collator.compare(String(leftValue), String(rightValue));
+      if (comparison !== 0) return sortKey === 'title-asc' ? comparison : -comparison;
+      return collator.compare(
+        left?.composedTitle ?? left?.originalTitle ?? '',
+        right?.composedTitle ?? right?.originalTitle ?? ''
+      );
+    });
+  }
+
+  function summarizePurchaseProducts(products) {
+    const purchased = (products ?? []).filter((product) => getOwnedQuantity(product) > 0);
+    const browserImages = new Map();
+    for (const product of purchased) {
+      for (const image of product?.images ?? []) {
+        if (
+          image.storageBackend === 'browser' &&
+          image.storageStatus === 'stored' &&
+          image.hash &&
+          !browserImages.has(image.hash)
+        ) {
+          browserImages.set(image.hash, Number(image.byteSize) || 0);
+        }
+      }
+    }
+    return {
+      productCount: purchased.length,
+      ownedQuantity: purchased.reduce((sum, product) => sum + getOwnedQuantity(product), 0),
+      listedValue: purchased.reduce(
+        (sum, product) =>
+          sum + (Number(product?.details?.listedPrice) || 0) * getOwnedQuantity(product),
+        0
+      ),
+      imageCount: browserImages.size,
+      imageBytes: [...browserImages.values()].reduce((sum, value) => sum + value, 0),
+    };
   }
 
   function updatePurchaseControls(button, editButton, productRecord) {
@@ -1778,9 +2303,9 @@ legend {
     return record;
   }
 
-  async function openPurchaseEditor(getTitle, purchaseButton, editButton) {
+  async function openPurchaseEditor(productKey, displayTitle, onSaved = () => {}) {
     if (document.getElementById(PURCHASE_MODAL_ID)) return false;
-    let currentRecord = (await databaseGet('products', getProductIdentity().key)) ?? null;
+    let currentRecord = (await databaseGet('products', productKey)) ?? null;
     if (!currentRecord || getOwnedQuantity(currentRecord) === 0) {
       notify('当前商品还没有可修改的购入记录。');
       return false;
@@ -1833,7 +2358,7 @@ legend {
     const backdrop = shadow.querySelector('.backdrop');
     const recordList = shadow.querySelector('[data-role="record-list"]');
     const status = shadow.querySelector('[data-role="status"]');
-    shadow.querySelector('[data-role="title"]').textContent = getTitle();
+    shadow.querySelector('[data-role="title"]').textContent = displayTitle;
     form.elements.note.value = currentRecord?.note ?? '';
     form.elements.userTags.value = (currentRecord?.userTags ?? []).join('、');
 
@@ -1957,8 +2482,13 @@ legend {
           updatedAt: new Date().toISOString(),
         };
         await databasePut('products', currentRecord);
-        updatePurchaseControls(purchaseButton, editButton, currentRecord);
+        announceArchiveChange(currentRecord.key);
         close();
+        try {
+          await onSaved(currentRecord);
+        } catch (refreshError) {
+          console.warn(`[${SCRIPT_LABEL}] Purchase editor refresh failed.`, refreshError);
+        }
         notify('购入记录已更新。');
       } catch (error) {
         console.error(`[${SCRIPT_LABEL}] Purchase record update failed.`, error);
@@ -2018,6 +2548,592 @@ legend {
       imageCount: images.length,
       imageBytes: images.reduce((sum, image) => sum + (Number(image.byteSize) || 0), 0),
     };
+  }
+
+  function formatArchiveCurrency(value) {
+    const amount = Math.max(0, Number(value) || 0);
+    return `¥${Math.round(amount).toLocaleString('ja-JP')}`;
+  }
+
+  function formatArchiveDateTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '未记录' : date.toLocaleString('zh-CN');
+  }
+
+  function getArchiveCover(productRecord) {
+    return [...(productRecord?.images ?? [])].sort((left, right) => {
+      const leftRank = left.role === 'cover' ? 0 : 1;
+      const rightRank = right.role === 'cover' ? 0 : 1;
+      return leftRank - rightRank || (Number(left.order) || 0) - (Number(right.order) || 0);
+    })[0] ?? null;
+  }
+
+  async function resolveArchiveImageUrl(image, objectUrls) {
+    if (!image) return null;
+    if (image.storageBackend === 'browser' && image.storageStatus === 'stored' && image.hash) {
+      const storedImage = await databaseGet('images', image.hash);
+      if (storedImage?.blob instanceof Blob) {
+        const objectUrl = URL.createObjectURL(storedImage.blob);
+        objectUrls.add(objectUrl);
+        return objectUrl;
+      }
+    }
+    if (image.storageBackend === 'directory' && image.storageStatus === 'stored' && image.localPath) {
+      try {
+        const directoryHandle = await getArchiveDirectoryHandle();
+        const permission = await directoryHandle?.queryPermission?.({ mode: 'read' });
+        const [directoryName, filename] = String(image.localPath).split('/');
+        if (permission === 'granted' && directoryName && filename) {
+          const imageDirectory = await directoryHandle.getDirectoryHandle(directoryName);
+          const fileHandle = await imageDirectory.getFileHandle(filename);
+          const objectUrl = URL.createObjectURL(await fileHandle.getFile());
+          objectUrls.add(objectUrl);
+          return objectUrl;
+        }
+      } catch {
+        // 本地目录当前不可读时回退到页面原图地址。
+      }
+    }
+    return image.sourceUrl ?? null;
+  }
+
+  function revokeObjectUrls(objectUrls) {
+    for (const objectUrl of objectUrls) URL.revokeObjectURL(objectUrl);
+    objectUrls.clear();
+  }
+
+  function appendDetailRow(list, label, value) {
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const description = document.createElement('dd');
+    description.textContent = value || '未记录';
+    list.append(term, description);
+  }
+
+  function createDetailSection(title) {
+    const section = document.createElement('section');
+    section.className = 'detail-section';
+    const heading = document.createElement('h4');
+    heading.textContent = title;
+    section.append(heading);
+    return section;
+  }
+
+  function createTagList(tags) {
+    const list = document.createElement('ul');
+    list.className = 'tag-list';
+    for (const tag of uniqueNonEmpty(tags ?? [])) {
+      const item = document.createElement('li');
+      item.textContent = tag;
+      list.append(item);
+    }
+    if (!list.childElementCount) {
+      const item = document.createElement('li');
+      item.textContent = '无';
+      list.append(item);
+    }
+    return list;
+  }
+
+  async function openArchiveBrowser() {
+    if (document.getElementById(ARCHIVE_BROWSER_ID)) return false;
+
+    const previousFocus = document.activeElement;
+    const host = document.createElement('div');
+    host.id = ARCHIVE_BROWSER_ID;
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>${ARCHIVE_BROWSER_STYLES}</style>
+      <div class="backdrop">
+        <section class="dialog archive-dialog" role="dialog" aria-modal="true" aria-labelledby="melon-archive-browser-title">
+          <header class="header">
+            <h2 id="melon-archive-browser-title">🗃️ Melon Archive 购入记录</h2>
+            <div class="archive-header-actions">
+              <button type="button" data-action="export">⬇️导出JSON</button>
+              <button type="button" data-action="import">⬆️合并导入</button>
+              <input type="file" accept="application/json,.json" data-role="import-file" hidden>
+              <button class="close" type="button" data-action="close" aria-label="关闭记录库">×</button>
+            </div>
+          </header>
+          <div class="archive-controls">
+            <div class="archive-stats">
+              <div class="stat-card"><span>商品种类</span><strong data-stat="products">—</strong></div>
+              <div class="stat-card"><span>持有总数</span><strong data-stat="quantity">—</strong></div>
+              <div class="stat-card"><span>页面标价合计</span><strong data-stat="value">—</strong></div>
+              <div class="stat-card"><span>关联浏览器图片</span><strong data-stat="images">—</strong></div>
+            </div>
+            <div class="archive-filters">
+              <label><span>搜索</span><input type="search" data-filter="query" placeholder="标题、社团、作者、Tag或备注"></label>
+              <label><span>展会</span><select data-filter="event"><option value="">全部展会</option></select></label>
+              <label><span>分类／类型</span><select data-filter="category"><option value="">全部分类</option></select></label>
+              <label><span>购入日起</span><input type="date" data-filter="dateFrom"></label>
+              <label><span>购入日止</span><input type="date" data-filter="dateTo"></label>
+              <label><span>排序</span><select data-filter="sort">
+                <option value="purchase-desc">最近购入</option>
+                <option value="recorded-desc">最近入库</option>
+                <option value="publication-desc">発行日</option>
+                <option value="title-asc">标题</option>
+                <option value="price-desc">价格</option>
+                <option value="quantity-desc">持有数量</option>
+              </select></label>
+              <label><span>备注</span><select data-filter="note">
+                <option value="all">全部</option><option value="yes">有备注</option><option value="no">无备注</option>
+              </select></label>
+              <label><span>图片</span><select data-filter="image">
+                <option value="all">全部</option><option value="stored">已保存图片</option><option value="missing">未保存图片</option>
+              </select></label>
+            </div>
+            <div class="archive-actions">
+              <button type="button" data-action="reset-filters">清除筛选</button>
+              <p class="status" data-role="archive-message"></p>
+            </div>
+          </div>
+          <div class="archive-workspace">
+            <section class="archive-list-pane" aria-label="购入记录列表">
+              <p class="archive-list-status" data-role="list-status">正在读取购入记录…</p>
+              <ul class="archive-records" data-role="records"></ul>
+              <nav class="archive-pagination" aria-label="记录分页">
+                <button type="button" data-action="previous-page">上一页</button>
+                <span data-role="page-status">第1页</span>
+                <button type="button" data-action="next-page">下一页</button>
+              </nav>
+            </section>
+            <aside class="archive-detail-pane" data-role="detail" aria-label="商品详情">
+              <div class="detail-empty">选择一条记录查看完整资料</div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    `;
+
+    const backdrop = shadow.querySelector('.backdrop');
+    const recordsElement = shadow.querySelector('[data-role="records"]');
+    const detailElement = shadow.querySelector('[data-role="detail"]');
+    const listStatus = shadow.querySelector('[data-role="list-status"]');
+    const pageStatus = shadow.querySelector('[data-role="page-status"]');
+    const archiveMessage = shadow.querySelector('[data-role="archive-message"]');
+    const importFile = shadow.querySelector('[data-role="import-file"]');
+    const previousPageButton = shadow.querySelector('[data-action="previous-page"]');
+    const nextPageButton = shadow.querySelector('[data-action="next-page"]');
+    const listObjectUrls = new Set();
+    const detailObjectUrls = new Set();
+    let allProducts = [];
+    let visibleProducts = [];
+    let currentPage = 1;
+    let selectedKey = null;
+    let renderGeneration = 0;
+    let searchTimer = 0;
+
+    const close = () => {
+      window.clearTimeout(searchTimer);
+      revokeObjectUrls(listObjectUrls);
+      revokeObjectUrls(detailObjectUrls);
+      host.remove();
+      previousFocus?.focus?.();
+    };
+
+    const readFilters = () => ({
+      query: shadow.querySelector('[data-filter="query"]').value,
+      event: shadow.querySelector('[data-filter="event"]').value,
+      category: shadow.querySelector('[data-filter="category"]').value,
+      dateFrom: shadow.querySelector('[data-filter="dateFrom"]').value,
+      dateTo: shadow.querySelector('[data-filter="dateTo"]').value,
+      note: shadow.querySelector('[data-filter="note"]').value,
+      image: shadow.querySelector('[data-filter="image"]').value,
+    });
+
+    const findProduct = (key) => allProducts.find((product) => product.key === key) ?? null;
+
+    const updateFilterOptions = () => {
+      const eventSelect = shadow.querySelector('[data-filter="event"]');
+      const categorySelect = shadow.querySelector('[data-filter="category"]');
+      const currentEvent = eventSelect.value;
+      const currentCategory = categorySelect.value;
+      const events = uniqueNonEmpty(allProducts.map((product) => product?.titleParts?.event)).sort();
+      const categories = uniqueNonEmpty(allProducts.flatMap(getArchiveCategories)).sort();
+      eventSelect.replaceChildren(new Option('全部展会', ''));
+      categorySelect.replaceChildren(new Option('全部分类', ''));
+      for (const value of events) eventSelect.add(new Option(value, value));
+      for (const value of categories) categorySelect.add(new Option(value, value));
+      eventSelect.value = events.includes(currentEvent) ? currentEvent : '';
+      categorySelect.value = categories.includes(currentCategory) ? currentCategory : '';
+    };
+
+    const loadImageInto = async (container, productRecord, image, generation, objectUrls) => {
+      try {
+        const url = await resolveArchiveImageUrl(image, objectUrls);
+        if (!url || generation !== renderGeneration || !container.isConnected) return;
+        const imageElement = document.createElement('img');
+        imageElement.alt = `${productRecord.composedTitle || productRecord.originalTitle || '商品'} 封面`;
+        imageElement.loading = 'lazy';
+        imageElement.src = url;
+        imageElement.addEventListener('error', () => {
+          imageElement.remove();
+          container.textContent = '图片不可用';
+        }, { once: true });
+        container.replaceChildren(imageElement);
+      } catch {
+        if (generation === renderGeneration && container.isConnected) container.textContent = '图片不可用';
+      }
+    };
+
+    const deleteRecord = async (productRecord) => {
+      const title = productRecord.composedTitle || productRecord.originalTitle || productRecord.productId;
+      if (!window.confirm(`确定删除“${title}”的全部购入记录？\n\n共享图片Blob和本地目录文件不会立即删除。`)) return;
+      try {
+        await databaseDelete('products', productRecord.key);
+        announceArchiveChange(productRecord.key);
+        archiveMessage.textContent = '记录已删除；共享图片Blob和本地目录文件保持不变。';
+        selectedKey = null;
+        await loadProducts();
+      } catch (error) {
+        archiveMessage.textContent = `删除失败：${error instanceof Error ? error.message : String(error)}`;
+      }
+    };
+
+    const renderDetail = async (productRecord) => {
+      selectedKey = productRecord?.key ?? null;
+      revokeObjectUrls(detailObjectUrls);
+      detailElement.replaceChildren();
+      detailElement.classList.toggle('is-open', Boolean(productRecord));
+      for (const element of recordsElement.querySelectorAll('.archive-record')) {
+        element.classList.toggle('is-selected', element.dataset.key === selectedKey);
+      }
+      if (!productRecord) {
+        const empty = document.createElement('div');
+        empty.className = 'detail-empty';
+        empty.textContent = '选择一条记录查看完整资料';
+        detailElement.append(empty);
+        return;
+      }
+
+      const generation = renderGeneration;
+      const content = document.createElement('div');
+      content.className = 'detail-content';
+      const heading = document.createElement('div');
+      heading.className = 'detail-heading';
+      const cover = document.createElement('div');
+      cover.className = 'detail-cover';
+      cover.textContent = '无封面';
+      const headingText = document.createElement('div');
+      const title = document.createElement('h3');
+      title.textContent = productRecord.composedTitle || productRecord.originalTitle || '未命名商品';
+      const actions = document.createElement('div');
+      actions.className = 'detail-actions';
+      const openButton = document.createElement('button');
+      openButton.type = 'button';
+      openButton.textContent = '🔗打开商品页';
+      openButton.disabled = !productRecord.canonicalUrl;
+      openButton.addEventListener('click', () => window.open(productRecord.canonicalUrl, '_blank', 'noopener'));
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.textContent = '⚙️编辑记录';
+      editButton.addEventListener('click', () => {
+        void openPurchaseEditor(productRecord.key, title.textContent, async (updatedRecord) => {
+          await loadProducts(updatedRecord.key);
+        }).catch((error) => {
+          archiveMessage.textContent = `编辑器无法打开：${error instanceof Error ? error.message : String(error)}`;
+        });
+      });
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'danger';
+      deleteButton.textContent = '删除记录';
+      deleteButton.addEventListener('click', () => void deleteRecord(productRecord));
+      const closeDetailButton = document.createElement('button');
+      closeDetailButton.type = 'button';
+      closeDetailButton.textContent = '关闭详情';
+      closeDetailButton.addEventListener('click', () => void renderDetail(null));
+      actions.append(openButton, editButton, deleteButton, closeDetailButton);
+      headingText.append(title, actions);
+      heading.append(cover, headingText);
+      content.append(heading);
+      void loadImageInto(cover, productRecord, getArchiveCover(productRecord), generation, detailObjectUrls);
+
+      const overview = createDetailSection('商品与购入信息');
+      const overviewGrid = document.createElement('dl');
+      overviewGrid.className = 'detail-grid';
+      appendDetailRow(overviewGrid, '商品ID', productRecord.productId);
+      appendDetailRow(overviewGrid, '原始标题', productRecord.originalTitle);
+      appendDetailRow(overviewGrid, '展会', productRecord.titleParts?.event);
+      appendDetailRow(overviewGrid, '社团', productRecord.titleParts?.circle);
+      appendDetailRow(overviewGrid, '作者', productRecord.titleParts?.author);
+      appendDetailRow(overviewGrid, '分类', getArchiveCategories(productRecord).join('／'));
+      appendDetailRow(overviewGrid, '発行日', productRecord.details?.publicationDate);
+      appendDetailRow(overviewGrid, '発売日', productRecord.details?.releaseDate);
+      appendDetailRow(overviewGrid, '页面标价', productRecord.details?.listedPrice ? formatArchiveCurrency(productRecord.details.listedPrice) : '未记录');
+      appendDetailRow(overviewGrid, '版型／媒体', productRecord.details?.format);
+      appendDetailRow(overviewGrid, '页数', productRecord.details?.pageCount ? String(productRecord.details.pageCount) : '未记录');
+      appendDetailRow(overviewGrid, '对象年龄', productRecord.details?.audience);
+      appendDetailRow(overviewGrid, '持有数量', String(getOwnedQuantity(productRecord)));
+      appendDetailRow(overviewGrid, '首次入库', formatArchiveDateTime(productRecord.recordedAt));
+      appendDetailRow(overviewGrid, '最后更新', formatArchiveDateTime(productRecord.updatedAt));
+      overview.append(overviewGrid);
+      content.append(overview);
+
+      if (Object.keys(productRecord.details?.rawFields ?? {}).length) {
+        const rawFieldsSection = createDetailSection('页面详情字段');
+        const rawFieldsGrid = document.createElement('dl');
+        rawFieldsGrid.className = 'detail-grid';
+        for (const [label, value] of Object.entries(productRecord.details.rawFields)) {
+          appendDetailRow(rawFieldsGrid, label, value);
+        }
+        rawFieldsSection.append(rawFieldsGrid);
+        content.append(rawFieldsSection);
+      }
+
+      const acquisitionsSection = createDetailSection('购入批次');
+      const acquisitionsGrid = document.createElement('dl');
+      acquisitionsGrid.className = 'detail-grid';
+      for (const [index, acquisition] of (productRecord.acquisitions ?? []).entries()) {
+        const purchaseDate = acquisition.purchasedOn?.value || '未记录';
+        const defaultLabel = acquisition.purchaseDateIsDefault ? '（発行日默认值）' : '';
+        appendDetailRow(
+          acquisitionsGrid,
+          `批次${index + 1}`,
+          `${purchaseDate}${defaultLabel}／数量${acquisition.quantity}／入库${formatArchiveDateTime(acquisition.recordedAt)}`
+        );
+      }
+      acquisitionsSection.append(acquisitionsGrid);
+      content.append(acquisitionsSection);
+
+      const personalSection = createDetailSection('个人整理');
+      const note = document.createElement('p');
+      note.className = 'detail-text';
+      note.textContent = productRecord.note || '无备注';
+      personalSection.append(note, createTagList(productRecord.userTags));
+      content.append(personalSection);
+
+      const tagsSection = createDetailSection('官方Tag');
+      tagsSection.append(createTagList(productRecord.officialTags));
+      content.append(tagsSection);
+
+      const descriptions = [
+        ['特典信息', productRecord.descriptions?.bonusInformation],
+        ['社团评论／作品详情', productRecord.descriptions?.circleComment],
+        ['工作人员推荐', productRecord.descriptions?.staffRecommendation],
+      ].filter(([, value]) => Boolean(value));
+      if (descriptions.length) {
+        const descriptionSection = createDetailSection('页面说明');
+        for (const [label, value] of descriptions) {
+          const subheading = document.createElement('h4');
+          subheading.textContent = label;
+          const paragraph = document.createElement('p');
+          paragraph.className = 'detail-text';
+          paragraph.textContent = value;
+          descriptionSection.append(subheading, paragraph);
+        }
+        content.append(descriptionSection);
+      }
+
+      if ((productRecord.images ?? []).length) {
+        const imageSection = createDetailSection('归档图片');
+        const gallery = document.createElement('div');
+        gallery.className = 'detail-gallery';
+        for (const image of productRecord.images) {
+          const imageContainer = document.createElement('div');
+          imageContainer.className = 'detail-image';
+          imageContainer.textContent = `${image.role || '图片'}：${image.storageStatus || '未知状态'}`;
+          gallery.append(imageContainer);
+          void loadImageInto(imageContainer, productRecord, image, generation, detailObjectUrls);
+        }
+        imageSection.append(gallery);
+        content.append(imageSection);
+      }
+      detailElement.append(content);
+    };
+
+    const renderRecords = () => {
+      renderGeneration += 1;
+      const generation = renderGeneration;
+      revokeObjectUrls(listObjectUrls);
+      recordsElement.replaceChildren();
+      const totalPages = Math.max(1, Math.ceil(visibleProducts.length / ARCHIVE_PAGE_SIZE));
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+      const start = (currentPage - 1) * ARCHIVE_PAGE_SIZE;
+      const pageProducts = visibleProducts.slice(start, start + ARCHIVE_PAGE_SIZE);
+      listStatus.textContent = `显示${visibleProducts.length}条记录中的${pageProducts.length}条（每页${ARCHIVE_PAGE_SIZE}条）`;
+      pageStatus.textContent = `第${currentPage}／${totalPages}页`;
+      previousPageButton.disabled = currentPage <= 1;
+      nextPageButton.disabled = currentPage >= totalPages;
+      if (!pageProducts.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty-results';
+        empty.textContent = '没有符合条件的购入记录。';
+        recordsElement.append(empty);
+        void renderDetail(null);
+        return;
+      }
+
+      for (const productRecord of pageProducts) {
+        const item = document.createElement('li');
+        item.className = 'archive-record';
+        item.dataset.key = productRecord.key;
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.setAttribute('aria-label', `查看${productRecord.composedTitle || productRecord.originalTitle || '商品'}详情`);
+        const cover = document.createElement('div');
+        cover.className = 'record-cover';
+        cover.textContent = '无封面';
+        const recordContent = document.createElement('div');
+        recordContent.className = 'record-content';
+        const title = document.createElement('p');
+        title.className = 'record-title';
+        title.textContent = productRecord.composedTitle || productRecord.originalTitle || '未命名商品';
+        const metadata = document.createElement('p');
+        metadata.className = 'record-meta';
+        metadata.textContent = uniqueNonEmpty([
+          productRecord.titleParts?.event,
+          productRecord.titleParts?.circle,
+          productRecord.titleParts?.author,
+          productRecord.titleParts?.genre,
+        ]).join('／') || '无分类信息';
+        const purchase = document.createElement('p');
+        purchase.className = 'record-purchase';
+        const latestPurchaseDate = getLatestPurchaseDate(productRecord) || '购入日未记录';
+        const listedPrice = productRecord.details?.listedPrice
+          ? formatArchiveCurrency(productRecord.details.listedPrice)
+          : '价格未记录';
+        purchase.textContent = `${latestPurchaseDate}／持有${getOwnedQuantity(productRecord)}／${listedPrice}`;
+        recordContent.append(title, metadata, purchase);
+        const actions = document.createElement('div');
+        actions.className = 'record-actions';
+        const openButton = document.createElement('button');
+        openButton.type = 'button';
+        openButton.textContent = '打开';
+        openButton.disabled = !productRecord.canonicalUrl;
+        openButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          window.open(productRecord.canonicalUrl, '_blank', 'noopener');
+        });
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.textContent = '编辑';
+        editButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void openPurchaseEditor(productRecord.key, title.textContent, async (updatedRecord) => {
+            await loadProducts(updatedRecord.key);
+          }).catch((error) => {
+            archiveMessage.textContent = `编辑器无法打开：${error instanceof Error ? error.message : String(error)}`;
+          });
+        });
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'danger';
+        deleteButton.textContent = '删除';
+        deleteButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void deleteRecord(productRecord);
+        });
+        actions.append(openButton, editButton, deleteButton);
+        item.append(cover, recordContent, actions);
+        item.addEventListener('click', () => void renderDetail(productRecord));
+        item.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          void renderDetail(productRecord);
+        });
+        item.classList.toggle('is-selected', productRecord.key === selectedKey);
+        recordsElement.append(item);
+        void loadImageInto(cover, productRecord, getArchiveCover(productRecord), generation, listObjectUrls);
+      }
+    };
+
+    const applyFilters = ({ keepPage = false } = {}) => {
+      if (!keepPage) currentPage = 1;
+      const sortKey = shadow.querySelector('[data-filter="sort"]').value;
+      visibleProducts = sortArchiveProducts(filterArchiveProducts(allProducts, readFilters()), sortKey);
+      renderRecords();
+    };
+
+    const updateStats = () => {
+      const summary = summarizePurchaseProducts(allProducts);
+      shadow.querySelector('[data-stat="products"]').textContent = summary.productCount.toLocaleString('zh-CN');
+      shadow.querySelector('[data-stat="quantity"]').textContent = summary.ownedQuantity.toLocaleString('zh-CN');
+      shadow.querySelector('[data-stat="value"]').textContent = formatArchiveCurrency(summary.listedValue);
+      shadow.querySelector('[data-stat="images"]').textContent = `${summary.imageCount.toLocaleString('zh-CN')}张／${formatBytes(summary.imageBytes)}`;
+    };
+
+    async function loadProducts(preferredKey = null) {
+      allProducts = (await databaseGetAll('products')).filter((product) => getOwnedQuantity(product) > 0);
+      updateFilterOptions();
+      updateStats();
+      applyFilters({ keepPage: true });
+      const productRecord = preferredKey ? findProduct(preferredKey) : findProduct(selectedKey);
+      await renderDetail(productRecord);
+    }
+
+    for (const button of shadow.querySelectorAll('[data-action="close"]')) {
+      button.addEventListener('click', close);
+    }
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+    host.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !document.getElementById(PURCHASE_MODAL_ID)) close();
+    });
+    shadow.querySelector('[data-filter="query"]').addEventListener('input', () => {
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => applyFilters(), 180);
+    });
+    for (const control of shadow.querySelectorAll('[data-filter]:not([data-filter="query"])')) {
+      control.addEventListener('change', () => applyFilters());
+    }
+    shadow.querySelector('[data-action="reset-filters"]').addEventListener('click', () => {
+      for (const control of shadow.querySelectorAll('[data-filter]')) {
+        if (control.dataset.filter === 'sort') control.value = 'purchase-desc';
+        else if (control.tagName === 'SELECT') control.selectedIndex = 0;
+        else control.value = '';
+      }
+      applyFilters();
+    });
+    previousPageButton.addEventListener('click', () => {
+      currentPage -= 1;
+      renderRecords();
+    });
+    nextPageButton.addEventListener('click', () => {
+      currentPage += 1;
+      renderRecords();
+    });
+    shadow.querySelector('[data-action="export"]').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      archiveMessage.textContent = '正在导出记录…';
+      try {
+        const count = await exportArchiveMetadata();
+        archiveMessage.textContent = `已导出${count}条商品记录。`;
+      } catch (error) {
+        archiveMessage.textContent = `导出失败：${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    shadow.querySelector('[data-action="import"]').addEventListener('click', () => {
+      importFile.value = '';
+      importFile.click();
+    });
+    importFile.addEventListener('change', async () => {
+      const file = importFile.files?.[0];
+      if (!file) return;
+      archiveMessage.textContent = '正在合并导入记录…';
+      try {
+        const count = await importArchiveMetadata(file);
+        announceArchiveChange();
+        archiveMessage.textContent = `已合并导入${count}条商品记录。`;
+        await loadProducts();
+      } catch (error) {
+        archiveMessage.textContent = `导入失败：${error instanceof Error ? error.message : String(error)}`;
+      }
+    });
+
+    document.documentElement.append(host);
+    try {
+      await loadProducts();
+      shadow.querySelector('[data-filter="query"]').focus();
+    } catch (error) {
+      listStatus.textContent = `记录库读取失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+    return true;
   }
 
   function formatBytes(value) {
@@ -2313,6 +3429,7 @@ legend {
       archiveStatus.textContent = '正在合并导入记录…';
       try {
         const count = await importArchiveMetadata(file);
+        announceArchiveChange();
         archiveStatus.textContent = `已合并导入${count}条商品记录。`;
         await refreshArchiveStatus();
       } catch (error) {
@@ -2336,8 +3453,14 @@ legend {
     return true;
   }
 
-  function registerSettingsMenu() {
+  function registerMenus() {
     GM_registerMenuCommand('⚙️ Melon Archive 设置', openSettingsDialog);
+    GM_registerMenuCommand('🗃️ 查看购入记录', () => {
+      void openArchiveBrowser().catch((error) => {
+        console.error(`[${SCRIPT_LABEL}] Archive browser failed.`, error);
+        notify(`购入记录库无法打开：${error instanceof Error ? error.message : String(error)}`);
+      });
+    });
   }
 
   /**
@@ -2438,7 +3561,11 @@ legend {
         });
       });
       purchaseEditButton.addEventListener('click', () => {
-        void openPurchaseEditor(getCurrentTitle, purchaseButton, purchaseEditButton).catch(
+        void openPurchaseEditor(
+          getProductIdentity().key,
+          getCurrentTitle(),
+          (updatedRecord) => updatePurchaseControls(purchaseButton, purchaseEditButton, updatedRecord)
+        ).catch(
           (error) => {
             console.error(`[${SCRIPT_LABEL}] Purchase editor failed.`, error);
             notify(`购入记录无法打开：${error instanceof Error ? error.message : String(error)}`);
@@ -2487,6 +3614,18 @@ legend {
       buttonGroup.append(copyButton, downloadButton);
       if (settings.enablePurchaseRecords && isDoujinProduct) {
         buttonGroup.append(purchaseButton, purchaseEditButton);
+        window.addEventListener(ARCHIVE_CHANGED_EVENT, (event) => {
+          const changedKey = event.detail?.productKey;
+          const currentKey = getProductIdentity().key;
+          if (changedKey && changedKey !== currentKey) return;
+          void databaseGet('products', currentKey)
+            .then((storedProduct) =>
+              updatePurchaseControls(purchaseButton, purchaseEditButton, storedProduct)
+            )
+            .catch((error) =>
+              console.warn(`[${SCRIPT_LABEL}] Purchase controls refresh failed.`, error)
+            );
+        });
         try {
           const storedProduct = await databaseGet('products', getProductIdentity().key);
           updatePurchaseControls(purchaseButton, purchaseEditButton, storedProduct);
@@ -2538,7 +3677,7 @@ legend {
   }
 
   function main() {
-    registerSettingsMenu();
+    registerMenus();
     const site = getSiteDefinition(window.location.href);
     if (!site) return;
     const settings = loadSettings();
@@ -2555,11 +3694,14 @@ legend {
       createAcquisition,
       enablePriceCopy,
       extractNumericPrice,
+      filterArchiveProducts,
+      formatArchiveCurrency,
       formatBytes,
       formatFieldButtonText,
       formatJapaneseDate,
       formatUnavailableFieldButtonText,
       getOwnedQuantity,
+      getLatestPurchaseDate,
       getSiteDefinition,
       hasBracketedContent,
       inferImageExtension,
@@ -2572,7 +3714,9 @@ legend {
       normalizeSpaces,
       saveSettings,
       sanitizeFilename,
+      sortArchiveProducts,
       stripBracketedContent,
+      summarizePurchaseProducts,
     };
   } else {
     main();

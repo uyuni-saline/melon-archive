@@ -26,7 +26,7 @@ The userscript is organized in the following order:
 5. site and DOM extraction helpers
 6. product archive extraction and IndexedDB helpers
 7. cover discovery, image hashing, thumbnail, and directory helpers
-8. page UI, purchase dialog, and Shadow DOM settings dialog
+8. page UI, purchase dialog, full-screen archive browser, and Shadow DOM settings dialog
 9. startup and CommonJS test exports
 
 Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title formatting and filename handling independent of the DOM so they can be tested in Node.
@@ -53,7 +53,7 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - When enabled, normalize the detail table's `発行日` to `YYYY年MM月DD日` and display it directly above the storefront's existing `発売日` line.
 - When enabled, make only the main product price clickable and keyboard-accessible; copy its current value as digits only without changing the displayed price text.
 - When enabled, move the original favorite-circle and wishlist action group immediately above the delivery-method accordion without cloning or replacing its nodes.
-- Register one Tampermonkey menu command that opens an accessible, Shadow DOM-isolated settings dialog.
+- Register separate Tampermonkey menu commands for the accessible Shadow DOM settings dialog and the full-screen purchase archive browser.
 - Persist only validated known boolean settings. Merge missing settings with defaults and remove storage when every value equals its default.
 - Apply saved settings after saving and refreshing the current product page.
 - Button status text must not append the generated title.
@@ -70,6 +70,9 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Local-directory image storage requires an explicitly selected File System Access directory and writes content-addressed images plus per-product JSON. Never request a broad filesystem path automatically.
 - Missing scalar metadata uses `null`, missing collections use `[]`, and failed image downloads retain an explicit status.
 - Metadata JSON exports never embed image Blob data; imports merge acquisitions by ID instead of overwriting them.
+- The archive browser lists purchased products only, paginates at 50 records, and reads image Blob data only for the visible page or selected detail.
+- Archive search and filtering operate on loaded product metadata; do not load every image Blob to calculate list statistics.
+- Deleting a product record must not immediately delete its content-addressed image Blob or local-directory file because another product may reference the same hash.
 
 Treat changes to these behaviors as product decisions rather than cleanup.
 
@@ -106,6 +109,7 @@ Confirm the following:
 
 - buttons appear once and in the intended location;
 - the Tampermonkey menu opens only one settings dialog, whose save, cancel, reset, backdrop, and Escape interactions work;
+- the archive menu opens only one full-screen record browser, and its close, import, export, search, filters, sorting, pagination, and responsive detail interactions work;
 - saved settings survive reloads, invalid stored values fall back safely, and a fully default configuration removes its stored value;
 - the storefront heading element keeps its original styling while its text becomes the full archive title;
 - when enabled, event, circle, author, title, and genre each get one fixed-size button in a vertical group on the right side of the product metadata;
@@ -126,6 +130,7 @@ Confirm the following:
 - first-time purchase marking saves immediately with quantity one, blank note/tags, and the publication date as the day-precision purchase date when available;
 - the automatic-date flag is present only for the quick-added publication date and is cleared after a manual date edit;
 - the gear control appears beside existing purchases and edits repeated batches, dates, quantities, notes, and user tags;
+- the archive browser shows purchased products only, lazy-loads visible thumbnails, opens stored details, reuses the purchase editor, opens canonical product URLs, and deletes records without deleting shared image Blob data;
 - product records include the three header classifications, official tags, circle comment, staff recommendation, and optional fields without fabricated placeholders;
 - browser image modes store the selected scope with SHA-256 deduplication, while directory mode writes only inside the selected directory;
 - NowPrinting content is deduplicated even when served from different URLs;

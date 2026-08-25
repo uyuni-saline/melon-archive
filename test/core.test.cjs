@@ -10,10 +10,13 @@ const {
   createAcquisition,
   enablePriceCopy,
   extractNumericPrice,
+  filterArchiveProducts,
+  formatArchiveCurrency,
   formatFieldButtonText,
   formatJapaneseDate,
   formatUnavailableFieldButtonText,
   getOwnedQuantity,
+  getLatestPurchaseDate,
   getSiteDefinition,
   hasBracketedContent,
   inferImageExtension,
@@ -26,7 +29,9 @@ const {
   normalizeSpaces,
   saveSettings,
   sanitizeFilename,
+  sortArchiveProducts,
   stripBracketedContent,
+  summarizePurchaseProducts,
 } = require('../melon-archive.user.js');
 
 test('normalizeSpaces handles full-width and repeated whitespace', () => {
@@ -138,6 +143,69 @@ test('classifyHeaderLabels preserves categories and separates sales badges', () 
 test('purchase quantities are derived from acquisition batches', () => {
   assert.equal(getOwnedQuantity({ acquisitions: [{ quantity: 1 }, { quantity: 2 }] }), 3);
   assert.equal(getOwnedQuantity({ acquisitions: [] }), 0);
+});
+
+test('archive helpers filter, sort, and summarize purchased products', () => {
+  const products = [
+    {
+      key: 'melonbooks:1',
+      composedTitle: '(C108) [Circle A (Author A)] Alpha (原创)',
+      titleParts: { event: 'C108', circle: 'Circle A', author: 'Author A', genre: '原创' },
+      classifications: { productCategory: 'オリジナル同人誌' },
+      acquisitions: [
+        { quantity: 1, purchasedOn: { value: '2026-08-17', precision: 'day' } },
+        { quantity: 2, purchasedOn: { value: '2026-08-20', precision: 'day' } },
+      ],
+      details: { listedPrice: 1100, publicationDate: '2026-08-16' },
+      userTags: ['收藏'],
+      officialTags: ['夏'],
+      note: '现场购入',
+      images: [
+        { hash: 'same-cover', storageBackend: 'browser', storageStatus: 'stored', byteSize: 100 },
+      ],
+      recordedAt: '2026-08-21T00:00:00Z',
+    },
+    {
+      key: 'melonbooks:2',
+      composedTitle: '(C107) [Circle B] Beta',
+      titleParts: { event: 'C107', circle: 'Circle B', genre: 'ホロライブ' },
+      acquisitions: [{ quantity: 1, purchasedOn: null }],
+      details: { listedPrice: 500 },
+      note: '',
+      images: [
+        { hash: 'same-cover', storageBackend: 'browser', storageStatus: 'stored', byteSize: 100 },
+      ],
+      recordedAt: '2026-08-19T00:00:00Z',
+    },
+    { key: 'melonbooks:3', composedTitle: 'Not owned', acquisitions: [] },
+  ];
+
+  assert.equal(getLatestPurchaseDate(products[0]), '2026-08-20');
+  assert.deepEqual(filterArchiveProducts(products, { query: 'author a' }).map(({ key }) => key), [
+    'melonbooks:1',
+  ]);
+  assert.deepEqual(
+    filterArchiveProducts(products, {
+      event: 'C108',
+      category: '原创',
+      dateFrom: '2026-08-18',
+      note: 'yes',
+      image: 'stored',
+    }).map(({ key }) => key),
+    ['melonbooks:1']
+  );
+  assert.deepEqual(sortArchiveProducts(products.slice(0, 2), 'quantity-desc').map(({ key }) => key), [
+    'melonbooks:1',
+    'melonbooks:2',
+  ]);
+  assert.deepEqual(summarizePurchaseProducts(products), {
+    productCount: 2,
+    ownedQuantity: 4,
+    listedValue: 3800,
+    imageCount: 1,
+    imageBytes: 100,
+  });
+  assert.equal(formatArchiveCurrency(3800), '¥3,800');
 });
 
 test('mergeProductRecords combines acquisition ids and user tags', () => {
