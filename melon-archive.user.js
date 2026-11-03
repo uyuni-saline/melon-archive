@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Melon Archive
 // @namespace    https://github.com/uyuni-saline
-// @version      2.2.0
+// @version      2.2.1
 // @description  在Melonbooks同人商品页生成规范标题、归档图片并管理私人购买记录。
 // @author       Saline
 // @homepageURL  https://github.com/uyuni-saline/melon-archive
@@ -242,6 +242,11 @@
 
 .melon-archive-button.is-done {
   filter: saturate(.78);
+}
+
+.melon-archive-button--purchase.is-done {
+  color: #555;
+  background: #ddd;
 }
 
 .melon-archive-price-copy {
@@ -3539,7 +3544,6 @@ legend {
           try {
             savedRecord = await archiveProductImages(savedRecord, settings);
             await databasePut('products', savedRecord);
-            notify('购入记录和图片归档已保存。');
           } catch (archiveError) {
             console.warn(`[${SCRIPT_LABEL}] Purchase saved without image archive.`, archiveError);
             notify(
