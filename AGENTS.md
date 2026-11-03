@@ -63,6 +63,7 @@ Melonbooks selectors and visual colors belong in `SITE_DEFINITION`. Keep title f
 - Store `purchaseDateIsDefault` on each acquisition. Set it only when quick-add uses the page publication date, and clear it after the user touches that date in the editor.
 - Use the gear button beside an existing purchase to edit batches, day-precision dates, quantities, notes, and user tags.
 - Derive owned quantity from acquisition batches and display quantities greater than one as `✅已购入 ×N`.
+- Show purchased buttons in gray and keep successful quick-add silent; retain save and image-archive failure notifications.
 - Download covers without copying by default; copy the current composed title only when the persistent `copyTitleOnDownload` setting is enabled.
 - Keep official storefront tags separate from user tags and preserve circle comments and staff recommendations independently.
 - Use `source + product_id` as the stable product key. Preserve original, composed, and component title values.
